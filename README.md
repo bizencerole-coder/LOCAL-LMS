@@ -21,7 +21,7 @@ through the API. See [docs/architecture.md](docs/architecture.md).
 |---|---|
 | `backend/` | FastAPI app (`app/`), Alembic migrations, admin CLI, demo seed manifest, tests |
 | `mobile/` | Flutter Android app (student UI and player) |
-| `deploy/` | `compose.yaml`, `.env.example`, Nginx config, `install.sh`, operator scripts |
+| `deploy/` | `compose.yaml`, `.env.example`, Nginx config, `install.sh`, `scripts/set_network.sh` (site move), operator scripts |
 | `docs/` | PRD, setup, architecture, API, testing, troubleshooting, backup/restore, M0 inventory |
 | `sample-data/` | How the demo test videos are generated |
 
@@ -77,6 +77,7 @@ Implemented in this repository (M1–M4 software): local login with argon2 hashe
 revocable sessions; class-scoped catalogue; signed, expiring Nginx playback URLs with Range
 support; progress upsert with configurable completion; health/readiness endpoints;
 request-ID logging; admin CLI (classes, subjects, chapters, students, video import,
+folder sync that builds the catalogue from `class/subject/chapter/lesson.mp4`,
 publish/unpublish, media checks); Flutter app with login, home, Continue Watching,
 My Learning, chapters, lessons, and a player with seek, ±10 s, speed, full-screen,
 resume and retry.

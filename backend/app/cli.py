@@ -476,6 +476,192 @@ def cmd_inspect_media(_: Session | None, args: argparse.Namespace) -> int:
     return report(args.paths)
 
 
+# --------------------------------------------------------------------------- sync-videos
+#
+# Folder layout under VIDEO_ROOT (names: letters, digits, '.', '-', '_'):
+#
+#   class12/computer-science/01-python-basics/02-python-functions.mp4
+#   <class>/<subject>/<chapter>/<video>.mp4      (chapter folder optional -> "Lessons")
+#
+# Display names come from the folder/file names: a leading "NN-" gives the order and is
+# dropped, '-' and '_' become spaces, words are capitalised, and a digit after letters
+# gets a space ("class12" -> "Class 12"). A `title.txt` inside a class/subject/chapter
+# folder, or a `<video>.txt` next to a video (first line title, rest description),
+# overrides the derived name.
+
+_ORDER_PREFIX_RE = re.compile(r"^(\d{1,3})[-_. ]+(.+)$")
+
+
+def _display_name(segment: str) -> tuple[int | None, str]:
+    """'02-python-functions' -> (2, 'Python Functions'); 'class12' -> (None, 'Class 12')."""
+    order: int | None = None
+    match = _ORDER_PREFIX_RE.match(segment)
+    if match:
+        order, segment = int(match.group(1)), match.group(2)
+    name = re.sub(r"[-_]+", " ", segment).strip()
+    name = re.sub(r"(?<=[A-Za-z])(?=\d)", " ", name)
+    name = " ".join(word[:1].upper() + word[1:] for word in name.split())
+    return order, name
+
+
+def _first_line(path: Path) -> str | None:
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                return line.strip()
+    except OSError:
+        return None
+    return None
+
+
+def _folder_title(folder: Path, derived: str) -> str:
+    override = _first_line(folder / "title.txt") if (folder / "title.txt").is_file() else None
+    return override or derived
+
+
+def _sidecar(video_path: Path) -> tuple[str | None, str | None]:
+    """Title and description from `<video>.txt` next to the file, if present."""
+    side = video_path.with_suffix(".txt")
+    if not side.is_file():
+        return None, None
+    try:
+        lines = side.read_text(encoding="utf-8").strip().splitlines()
+    except OSError:
+        return None, None
+    title = lines[0].strip() if lines else None
+    description = "\n".join(line.rstrip() for line in lines[1:]).strip() or None
+    return (title or None), description
+
+
+def _get_or_create_class(db: Session, name: str, created: list[str]) -> SchoolClass:
+    item = db.scalar(select(SchoolClass).where(SchoolClass.name == name))
+    if item is None:
+        item = SchoolClass(name=name, is_active=True)
+        db.add(item)
+        db.flush()
+        created.append(f"class {name}")
+    return item
+
+
+def _get_or_create_subject(
+    db: Session, school_class: SchoolClass, name: str, order: int | None, created: list[str]
+) -> Subject:
+    item = db.scalar(select(Subject).where(Subject.class_id == school_class.id, Subject.name == name))
+    if item is None:
+        item = Subject(class_id=school_class.id, name=name, sort_order=order or 0, is_active=True)
+        db.add(item)
+        db.flush()
+        created.append(f"subject {school_class.name}/{name}")
+    elif order is not None and item.sort_order != order:
+        item.sort_order = order
+    return item
+
+
+def _get_or_create_chapter(
+    db: Session, subject: Subject, title: str, order: int | None, created: list[str]
+) -> Chapter:
+    item = db.scalar(select(Chapter).where(Chapter.subject_id == subject.id, Chapter.title == title))
+    if item is None:
+        item = Chapter(subject_id=subject.id, title=title, sort_order=order or 0, is_published=True)
+        db.add(item)
+        db.flush()
+        created.append(f"chapter {subject.name}/{title}")
+    elif order is not None and item.sort_order != order:
+        item.sort_order = order
+    return item
+
+
+def cmd_sync_videos(db: Session, args: argparse.Namespace) -> int:
+    """Register every MP4 under VIDEO_ROOT from the folder layout. Re-runnable."""
+    root = get_settings().video_root
+    registered = {v.storage_key: v for v in db.scalars(select(Video))}
+    created: list[str] = []
+    seen: set[str] = set()
+    added = skipped = problems = 0
+
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in ALLOWED_EXTENSIONS:
+            continue
+        key = path.relative_to(root).as_posix()
+        try:
+            validate_storage_key(key)
+        except InvalidStorageKey as exc:
+            print(f"skip  {key}: {exc}")
+            skipped += 1
+            continue
+        parts = key.split("/")
+        if len(parts) < 3 or len(parts) > 4:
+            print(f"skip  {key}: expected <class>/<subject>/[<chapter>/]<video>.mp4")
+            skipped += 1
+            continue
+        seen.add(key)
+        if key in registered:
+            continue
+
+        class_dir, subject_dir = parts[0], parts[1]
+        chapter_dir = parts[2] if len(parts) == 4 else None
+        class_name = _folder_title(root / class_dir, _display_name(class_dir)[1])
+        subject_order, subject_derived = _display_name(subject_dir)
+        subject_name = _folder_title(root / class_dir / subject_dir, subject_derived)
+        if chapter_dir is not None:
+            chapter_order, chapter_derived = _display_name(chapter_dir)
+            chapter_title = _folder_title(root / class_dir / subject_dir / chapter_dir, chapter_derived)
+        else:
+            chapter_order, chapter_title = 0, "Lessons"
+        video_order, video_derived = _display_name(path.stem)
+        title, description = _sidecar(path)
+        title = title or video_derived
+
+        try:
+            _, meta, file_problems = inspect_video_file(key)
+        except CliError as exc:
+            print(f"FAIL  {key}: {exc}")
+            problems += 1
+            continue
+
+        school_class = _get_or_create_class(db, class_name, created)
+        subject = _get_or_create_subject(db, school_class, subject_name, subject_order, created)
+        chapter = _get_or_create_chapter(db, subject, chapter_title, chapter_order, created)
+        status = VideoStatus.PUBLISHED if (args.publish and not file_problems) else VideoStatus.DRAFT
+        db.add(
+            Video(
+                chapter_id=chapter.id,
+                title=title,
+                description=description,
+                storage_key=key,
+                sort_order=video_order or 0,
+                status=status.value,
+                **meta,
+            )
+        )
+        db.flush()
+        added += 1
+        print(f"+ [{status.value}] {class_name} / {subject_name} / {chapter_title} / {title}  ({key})")
+        for problem in file_problems:
+            problems += 1
+            print(f"      WARNING: {problem}")
+
+    archived = 0
+    if args.archive_missing:
+        for key, video in registered.items():
+            if key not in seen and video.status != VideoStatus.ARCHIVED.value:
+                video.status = VideoStatus.ARCHIVED.value
+                archived += 1
+                print(f"- archived {key} (file not found)")
+
+    for line in created:
+        print(f"+ {line}")
+    print(
+        f"Sync complete: {added} video(s) registered"
+        f"{' and published' if args.publish else ' as draft'}, "
+        f"{len(seen) - added} already registered, {skipped} skipped, {problems} with problems, "
+        f"{archived} archived."
+    )
+    if added and not args.publish:
+        print("Check them in the app or with 'tree', then publish with: publish-video <storage key>")
+    return 1 if problems else 0
+
+
 def cmd_seed_demo(db: Session, args: argparse.Namespace) -> None:
     """Idempotently load demo classes, content and students from a JSON manifest."""
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
@@ -671,6 +857,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("scan-videos", help="list MP4 files in VIDEO_ROOT that are not registered")
     p.set_defaults(func=cmd_scan_videos)
+
+    p = sub.add_parser(
+        "sync-videos",
+        help="register new MP4 files from the folder layout <class>/<subject>/<chapter>/<video>.mp4",
+    )
+    p.add_argument("--publish", action="store_true", help="publish new files that pass the check (default: draft)")
+    p.add_argument("--archive-missing", action="store_true", help="archive registered videos whose files are gone")
+    p.set_defaults(func=cmd_sync_videos)
 
     p = sub.add_parser("inspect-media", help="show MP4 metadata for files (no database needed)")
     p.add_argument("paths", nargs="+")

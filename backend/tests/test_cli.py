@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import func, select
 
 from app import cli
-from app.models import Chapter, SchoolClass, Student, Video
+from app.models import Chapter, SchoolClass, Student, Subject, Video
 from app.security import verify_password
 
 from .conftest import write_video
@@ -145,6 +145,70 @@ def test_load_students_create_is_rerunnable_and_delete_is_scoped(db, catalog, mo
     db.commit()
     remaining = sorted(db.scalars(select(Student.username).where(Student.username.like("load%"))))
     assert remaining == ["loadstone"]
+
+
+def test_display_name_rules():
+    assert cli._display_name("02-python-functions") == (2, "Python Functions")
+    assert cli._display_name("class12") == (None, "Class 12")
+    assert cli._display_name("computer-science") == (None, "Computer Science")
+    assert cli._display_name("01_Intro.to_Algebra") == (1, "Intro.to Algebra")
+    assert cli._display_name("lesson-01") == (None, "Lesson 01")
+
+
+def test_sync_videos_builds_the_catalogue_from_folders(db, catalog, capsys):
+    from .conftest import VIDEO_ROOT
+
+    # New lessons dropped on the share; one in a chapter folder, one directly under the subject.
+    write_video("class10/general-science/01-matter/02-states-of-matter.mp4", duration_seconds=300)
+    write_video("class10/general-science/01-matter/01-what-is-matter.mp4", duration_seconds=240)
+    write_video("class10/general-science/quick-revision.mp4", duration_seconds=60)
+    write_video("class10/general-science/01-matter/03-not-faststart.mp4", faststart=False)
+    (VIDEO_ROOT / "class10" / "title.txt").write_text("Class 10 (Science stream)\n", encoding="utf-8")
+    (VIDEO_ROOT / "class10" / "general-science" / "01-matter" / "02-states-of-matter.txt").write_text(
+        "States of Matter: solids, liquids, gases\nWith demonstrations.\nSecond paragraph.\n", encoding="utf-8"
+    )
+    # Things that must be ignored or skipped.
+    write_video("loose-file.mp4")
+    write_video("class10/general-science/01-matter/too/deep.mp4")
+
+    assert cli.cmd_sync_videos(db, args(publish=True, archive_missing=False)) == 1  # one file with problems
+    db.commit()
+
+    school_class = db.scalar(select(SchoolClass).where(SchoolClass.name == "Class 10 (Science stream)"))
+    assert school_class is not None
+    subject = db.scalar(select(Subject).where(Subject.class_id == school_class.id))
+    assert subject.name == "General Science"
+    chapters = {c.title: c for c in db.scalars(select(Chapter).where(Chapter.subject_id == subject.id))}
+    assert set(chapters) == {"Matter", "Lessons"}
+    assert chapters["Matter"].sort_order == 1 and chapters["Matter"].is_published
+    videos = {v.storage_key: v for v in db.scalars(select(Video).where(Video.storage_key.like("class10/%")))}
+    assert len(videos) == 4
+    states = videos["class10/general-science/01-matter/02-states-of-matter.mp4"]
+    assert states.title == "States of Matter: solids, liquids, gases"
+    assert states.description == "With demonstrations.\nSecond paragraph."
+    assert states.sort_order == 2 and states.status == "published" and states.duration_seconds == 300
+    assert videos["class10/general-science/01-matter/01-what-is-matter.mp4"].title == "What Is Matter"
+    assert videos["class10/general-science/quick-revision.mp4"].chapter_id == chapters["Lessons"].id
+    assert videos["class10/general-science/01-matter/03-not-faststart.mp4"].status == "draft"  # problems: never auto-published
+    out = capsys.readouterr().out
+    assert "skip  loose-file.mp4" in out and "skip  class10/general-science/01-matter/too/deep.mp4" in out
+    # The demo videos registered by the fixture are left exactly as they were.
+    assert catalog.draft.status == "draft" and catalog.lesson1.status == "published"
+
+    # Re-running changes nothing.
+    assert cli.cmd_sync_videos(db, args(publish=True, archive_missing=False)) == 0
+    db.commit()
+    assert db.scalar(select(func.count()).select_from(Video).where(Video.storage_key.like("class10/%"))) == 4
+    assert db.scalar(select(func.count()).select_from(Chapter).where(Chapter.subject_id == subject.id)) == 2
+
+    # A file removed from the share is archived only when asked.
+    (VIDEO_ROOT / "class10" / "general-science" / "quick-revision.mp4").unlink()
+    cli.cmd_sync_videos(db, args(publish=True, archive_missing=False))
+    db.commit()
+    assert videos["class10/general-science/quick-revision.mp4"].status == "published"
+    cli.cmd_sync_videos(db, args(publish=True, archive_missing=True))
+    db.commit()
+    assert db.get(Video, videos["class10/general-science/quick-revision.mp4"].id).status == "archived"
 
 
 def test_lookup_by_path(db, catalog):

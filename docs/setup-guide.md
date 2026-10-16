@@ -155,28 +155,74 @@ All demo accounts share the password you type; it is never stored in the reposit
 Re-running the seed is safe: existing records are left alone. To script it, pipe the
 password: `printf '%s\n' "$PW" | scripts/seed_demo_data.sh --password-stdin`.
 
-## 7. Adding a real lesson
+## 7. Adding lessons: the folder layout and `sync-videos`
 
-1. Encode to the profile in PRD §12 (H.264 + AAC MP4, 720p, `-movflags +faststart`) and
-   check it: `python3 scripts/inspect_media.py lesson.mp4`.
-2. Copy it into `VIDEO_ROOT` using a safe name (letters, digits, `.`, `-`, `_`), e.g.
-   `class12/computer-science/lesson-04.mp4`.
-3. Register it as a draft, check it plays, then publish:
+The catalogue the app shows (class → subject → chapter → lesson) can be built straight
+from the folders under `VIDEO_ROOT`. Teachers copy files; the server registers them.
+
+### 7.1 Folder layout
+
+```text
+VIDEO_ROOT/
+  class12/                         → class "Class 12"
+    computer-science/              → subject "Computer Science"
+      01-python-basics/            → chapter "Python Basics", order 1
+        01-variables-and-types.mp4 → lesson "Variables And Types", order 1
+        02-python-functions.mp4    → lesson "Python Functions", order 2
+        02-python-functions.txt    → optional: first line = title, rest = description
+      title.txt                    → optional: overrides the subject's display name
+    mathematics/
+      quick-revision.mp4           → no chapter folder: goes into a chapter called "Lessons"
+```
+
+Rules:
+- Names may contain letters, digits, `.`, `-` and `_` only — **no spaces** and nothing else.
+  Use `title.txt` (in a class, subject or chapter folder) or `<lesson>.txt` (next to a file)
+  for the names students should see, e.g. `Class 12 – Science` or `Lesson 2: Functions`.
+- A leading number and dash (`01-`, `02-`) sets the order and is removed from the name.
+  `-` and `_` become spaces, words are capitalised, and `class12` becomes `Class 12`.
+- Exactly three or four levels: `class/subject/lesson.mp4` or `class/subject/chapter/lesson.mp4`.
+- Files must be H.264 + AAC MP4 with fast-start (PRD §12). Check before copying with
+  `python3 scripts/inspect_media.py lesson.mp4`; a file with problems is registered but
+  stays a draft until fixed.
+- Student access follows the class name: `scripts/lms-admin.sh assign-class <username> "Class 12"`.
+
+### 7.2 Copying files to the server
+
+From Windows: open `\\172.18.1.169\campus-lms` (OMV SMB share; sign in as `lmsadmin`) and
+copy into `videos\class12\computer-science\...`. From Linux/macOS: `scp` or an SMB mount.
+The share is for the content administrator only — keep it off the student Wi-Fi (PRD §11.2).
+
+### 7.3 Registering them
 
 ```bash
-scripts/lms-admin.sh scan-videos                       # lists unregistered files
-scripts/lms-admin.sh add-video --chapter "Class 12/Computer Science/Python Basics" \
-    --storage-key class12/computer-science/lesson-04.mp4 --title "Lesson 4: Dictionaries" --sort 4
-scripts/lms-admin.sh publish-video class12/computer-science/lesson-04.mp4
-scripts/lms-admin.sh tree                              # shows everything with IDs and status
+scripts/lms-admin.sh sync-videos             # registers new files as drafts; existing ones are untouched
+scripts/lms-admin.sh tree                    # review names, order and status
+scripts/lms-admin.sh publish-video class12/computer-science/01-python-basics/02-python-functions.mp4
+scripts/lms-admin.sh sync-videos --publish   # or: publish every new file that passes the check
+scripts/lms-admin.sh sync-videos --archive-missing   # also hide lessons whose files were removed
 ```
+
+To make new files appear in the app on their own, run the sync every few minutes from
+cron (or *System → Scheduled Tasks* in OMV, as `lmsadmin`):
+
+```cron
+*/5 * * * * cd /home/lmsadmin/campus-lms/deploy && scripts/lms-admin.sh sync-videos --publish >> /srv/backups/lms/sync.log 2>&1
+```
+
+Copy a lesson's files completely before the next run (or copy to a temporary folder
+outside `videos/` and move it in): a half-copied file is registered with the wrong size and
+would need `check-media --update` afterwards.
+
+For titles or placements the folder rules cannot express, register by hand instead:
+`add-video --chapter "Class 12/Computer Science/Python Basics" --storage-key <key> --title "..." --sort N`.
 
 Other admin commands (`scripts/lms-admin.sh --help`): `create-class`, `create-subject`,
 `create-chapter [--publish]`, `publish-chapter`, `unpublish-chapter`, `create-student`,
 `set-password`, `assign-class`, `activate-student`, `deactivate-student`,
 `list-students`, `create-load-students` / `delete-load-students` (for §14),
-`unpublish-video`, `archive-video`, `check-media [--update]`, `purge-sessions`,
-`seed-demo`. Passwords are always prompted for (or read with
+`scan-videos`, `add-video`, `unpublish-video`, `archive-video`, `check-media [--update]`,
+`purge-sessions`, `seed-demo`. Passwords are always prompted for (or read with
 `--password-stdin`), never passed as arguments.
 
 Example — create a student:
@@ -280,6 +326,44 @@ the output: [testing-plan.md](testing-plan.md#staged-load-test-server-side).
    to run them by hand with `docker compose run --rm api alembic upgrade head`)
 4. `scripts/smoke_test.py ...`
 5. If something is wrong: check out the previous version, rebuild, and restore the backup.
+
+## 16. Moving the server to another site (pilot at another campus)
+
+Nothing in the database, the videos or the app depends on the old network, except two
+settings and the address typed on each tablet. Before you leave:
+
+1. `scripts/backup.sh` and copy the newest dump and config archive to a USB stick.
+2. Note the admin accounts (`lmsadmin`, OMV `admin`) and the demo/student passwords.
+3. Shut the server down cleanly (OMV → power icon → Shutdown).
+
+At the new site:
+
+1. Connect the server to a **wired** switch port on the network the tablets will use
+   (same subnet as the tablets avoids the NAT problem seen in the test report, where every
+   tablet appeared as the router's address). Ask that network's admin for a **static address
+   or DHCP reservation** so it does not change again.
+2. Boot it and find the address: it is printed on the console, or run `ip -4 addr show`
+   over SSH if you know it. The OMV UI is at `http://<address>:8081`.
+3. Re-point the installation (keeps everything else):
+
+   ```bash
+   cd ~/campus-lms/deploy
+   scripts/set_network.sh --media-base-url http://<new address> --allow <tablet subnet, e.g. 10.20.0.0/16>
+   ```
+
+   It rewrites `MEDIA_BASE_URL`, regenerates `nginx/allowlist.conf`, recreates the API,
+   restarts Nginx and runs `check_stack.sh`. Use `--dry-run` first to see the changes.
+4. On each tablet: sign-in screen → **Server** → the new address → *Test connection* →
+   Save. Or build the APK with the new default (`mobile/README.md`).
+5. Run the smoke test from a laptop on the new Wi-Fi: `python3 scripts/smoke_test.py --base-url http://<new address>`.
+6. Check the Wi-Fi: tablets must reach the server (no client isolation, no guest VLAN),
+   and each tablet should have its own address as seen by the server
+   (`docker compose logs nginx | grep remote_addr`). If they all share one address, the
+   login throttle is shared by the whole class — fix the routing or raise the limit.
+
+To avoid step 4 at every move, give the server a **local DNS name** (e.g. `lms.campus.lan`)
+on each site's DNS server and use that name as `MEDIA_BASE_URL` and in the app; then only
+the DNS record changes. Public DNS must not be relied on (FR-10).
 
 ## Developing on Windows
 
