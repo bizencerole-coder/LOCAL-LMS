@@ -51,6 +51,9 @@ class PlayerScreen extends StatefulWidget {
 
 class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver {
   late final ApiClient _api;
+  // The player's own messenger: its notices leave with the player instead of
+  // lingering on the lists behind it (they would through the app-wide one).
+  final _messengerKey = GlobalKey<ScaffoldMessengerState>();
   VideoPlayerController? _controller;
   ProgressReporter? _reporter;
   PlaybackInfo? _info;
@@ -152,9 +155,15 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
       }
 
       if (resumed && startAt > Duration.zero && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        _messengerKey.currentState?.showSnackBar(SnackBar(
           content: Text('Resuming from ${formatDuration(startAt)}'),
-          action: SnackBarAction(label: 'Start over', onPressed: () => _controller?.seekTo(Duration.zero)),
+          duration: const Duration(seconds: 6),
+          action: SnackBarAction(
+            label: 'Start over',
+            onPressed: () {
+              if (mounted) _controller?.seekTo(Duration.zero);
+            },
+          ),
         ));
       }
     } on ApiException catch (e) {
@@ -359,30 +368,33 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
           _leave();
         }
       },
-      child: _fullScreen
-          ? Scaffold(backgroundColor: Colors.black, body: _videoArea())
-          : Scaffold(
-              appBar: AppBar(title: Text(widget.title)),
-              body: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Expanded(child: ColoredBox(color: Colors.black, child: _videoArea())),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(widget.title, style: theme.textTheme.titleLarge),
-                        if (widget.subtitle != null) ...[
-                          const SizedBox(height: 4),
-                          Text(widget.subtitle!, style: theme.textTheme.bodyMedium),
+      child: ScaffoldMessenger(
+        key: _messengerKey,
+        child: _fullScreen
+            ? Scaffold(backgroundColor: Colors.black, body: _videoArea())
+            : Scaffold(
+                appBar: AppBar(title: Text(widget.title)),
+                body: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: ColoredBox(color: Colors.black, child: _videoArea())),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(widget.title, style: theme.textTheme.titleLarge),
+                          if (widget.subtitle != null) ...[
+                            const SizedBox(height: 4),
+                            Text(widget.subtitle!, style: theme.textTheme.bodyMedium),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
+      ),
     );
   }
 }

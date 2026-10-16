@@ -62,7 +62,7 @@ server on 172.18.1.169/24; the segments are routed through 172.18.1.1.
 | Resume across devices (AC-06/AC-09) | **works** — smoke test saved 42 s for `demo.student`; the tablet opened the lesson at 0:39 ("Resuming from 0:39") |
 | AC-11 (no public dependency) | app start, sign-in and playback used only `172.18.1.169` (Nginx log) |
 | Player checklist (seek, speed, full-screen, pause, rotate), T-14 WAN unplugged, T-17 two tablets, 30-minute run | **not yet run** — next on site |
-| Content workflow: a lesson copied into the SMB share (`class11/physics/49-….mp4`) | **registered and published by the 5-minute cron sync** without any command; it landed under Class 11 because of its folder, so `demo.student` (Class 12) could not see it |
+| Content workflow: a lesson copied into the SMB share (`class11/physics/49-….mp4`) | **registered and published by the 5-minute cron sync** without any command; it landed under Class 11 because of its folder, so `demo.student` (Class 12) could not see it. Moved to `class12/computer-science/01-python-basics/04-python-tutorial.mp4`: the sync re-filed the same lesson as "Python Tutorial", lesson 4; a Class 12 account saw and played it through the API, and the realme tablet showed it under Python Basics for `demo.student` |
 | Share ↔ app structure: the 5 demo files moved into `class/subject/NN-chapter/NN-lesson.mp4` on the server, then `sync-videos` | **5 moved in place** — same IDs, status and progress; `check-media` 6/6 OK; signed playback of a moved lesson 200 / Range 206 / unsigned 403; rehearsed first on the local stack (smoke 27/27 afterwards) |
 
 Network finding: Nginx logs every client as `172.18.1.1` (the router NATs the tablet segment onto
@@ -113,6 +113,11 @@ were refuted as intended prototype behaviour or duplicates. All confirmed defect
 
 Container hardening added at the same time: internal database network, `cap_drop`,
 `no-new-privileges`, read-only API image.
+
+Found on the tablet later the same day: the player's "Resuming from …" notice stayed at the
+bottom of every screen after leaving the player, because it was shown through the app-wide
+messenger. It is now shown by the player's own messenger (gone when the player closes) and
+limited to six seconds; app version 1.0.1.
 
 Refuted (intentional, documented instead): last-writer-wins for concurrent saves from two
 devices; completion counts the position reached (seeking counts); case-insensitive media
