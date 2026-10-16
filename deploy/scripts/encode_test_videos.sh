@@ -37,9 +37,11 @@ encode() {
     mv "$target.part.mp4" "$target"
 }
 
-encode class12/computer-science/lesson-01.mp4       180 "Class 12 CS - Lesson 1"       440
-encode class12/computer-science/lesson-02.mp4       480 "Class 12 CS - Lesson 2"       523
-encode class12/computer-science/lesson-03-draft.mp4 120 "Class 12 CS - Lesson 3 DRAFT" 587
-encode class12/mathematics/lesson-01.mp4  "$LONG_SECONDS" "Class 12 Maths - Lesson 1"  659
-encode class11/physics/lesson-01.mp4                180 "Class 11 Physics - Lesson 1"  698
+# Same folder layout as sync-videos (class/subject/NN-chapter/NN-lesson.mp4), so the file
+# browser and the app show the same structure. Titles come from the seed manifest.
+encode class12/computer-science/01-python-basics/01-variables-and-types.mp4 180 "Class 12 CS - Lesson 1"       440
+encode class12/computer-science/01-python-basics/02-python-functions.mp4   480 "Class 12 CS - Lesson 2"       523
+encode class12/computer-science/01-python-basics/03-loops.mp4              120 "Class 12 CS - Lesson 3 DRAFT" 587
+encode class12/mathematics/01-calculus/01-limits-and-continuity.mp4 "$LONG_SECONDS" "Class 12 Maths - Lesson 1" 659
+encode class11/physics/01-motion/01-speed-and-velocity.mp4                 180 "Class 11 Physics - Lesson 1"  698
 echo "done"

@@ -158,6 +158,10 @@ All demo accounts share the password you type; it is never stored in the reposit
 Re-running the seed is safe: existing records are left alone. To script it, pipe the
 password: `printf '%s\n' "$PW" | scripts/seed_demo_data.sh --password-stdin`.
 
+The demo files use the same folder layout as §7 (`class12/computer-science/01-python-basics/01-variables-and-types.mp4`
+and so on), so what you see in the file share is what the app shows. The seed gives them
+their titles; a plain `sync-videos` on the same files would name them from the file names.
+
 ## 7. Adding lessons: the folder layout and `sync-videos`
 
 The catalogue the app shows (class → subject → chapter → lesson) can be built straight
@@ -206,16 +210,32 @@ scripts/lms-admin.sh sync-videos --publish   # or: publish every new file that p
 scripts/lms-admin.sh sync-videos --archive-missing   # also hide lessons whose files were removed
 ```
 
-To make new files appear in the app on their own, run the sync every few minutes from
+To make the app follow the folders on its own, run the sync every few minutes from
 cron (or *System → Scheduled Tasks* in OMV, as `lmsadmin`):
 
 ```cron
-*/5 * * * * cd /home/lmsadmin/campus-lms/deploy && scripts/lms-admin.sh sync-videos --publish >> /srv/backups/lms/sync.log 2>&1
+*/5 * * * * cd /home/lmsadmin/campus-lms/deploy && scripts/lms-admin.sh sync-videos --publish --archive-missing >> /srv/backups/lms/sync.log 2>&1
 ```
 
-Copy a lesson's files completely before the next run (or copy to a temporary folder
-outside `videos/` and move it in): a half-copied file is registered with the wrong size and
-would need `check-media --update` afterwards.
+A file copied in mid-way is registered with the size it had at that moment; the next run
+corrects the size and duration once the copy has finished (shown as `~ updated`). Students
+who open it in between get a short or failing lesson, so prefer copying into a folder outside
+`videos/` and moving it in when done.
+
+### 7.4 Moving, renaming, replacing and deleting files
+
+The sync keeps a lesson tied to its file, so you can tidy the share freely:
+
+| You do this in the share | The next sync does this |
+|---|---|
+| Rename a file or folder, or move a file to another subject/chapter folder | The lesson keeps its status and every student's progress, moves to the new chapter, and takes the new order number. A name that was derived from the file name follows the new name; a title set by `<lesson>.txt`, the seed or `add-video` is kept. Shown as `~ moved`. |
+| Replace a file with a new version (same name) | Size and duration are refreshed. Shown as `~ updated`. |
+| Delete a file | With `--archive-missing` the lesson is archived (hidden from the app; progress is kept). Without it the lesson stays listed and fails to play. |
+| Delete the file and copy the same file in two places | Treated as a removal and two new lessons: a move is only recognised when exactly one file of that size and duration disappears and exactly one appears. |
+
+Nothing is archived when the folder is completely empty, so a disk that failed to mount
+does not hide every lesson. If the storage comes back after lessons were archived,
+publish them again with `publish-video <storage key>`.
 
 For titles or placements the folder rules cannot express, register by hand instead:
 `add-video --chapter "Class 12/Computer Science/Python Basics" --storage-key <key> --title "..." --sort N`.

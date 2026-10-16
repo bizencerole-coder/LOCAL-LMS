@@ -13,6 +13,8 @@ address tablets use); it checks each layer in order and exits non-zero on any fa
 | Sign-in: "Incorrect username or password" | `lms-admin.sh list-students` | Wrong username; reset with `lms-admin.sh set-password <user>` |
 | Sign-in: "Too many attempts" (429) | Nginx log status 429 | 10 tries/min per IP; wait a minute |
 | Lesson list empty | `lms-admin.sh tree` | Student not in a class (`assign-class`), chapter unpublished, videos still draft, class/subject inactive |
+| A file copied to the share does not appear in the app | `tail /srv/backups/lms/sync.log`, `lms-admin.sh tree` | The sync runs every 5 minutes: wait for the next run. It is under another class's folder (`class11/…` is only shown to Class 11 students). Name contains spaces or other characters (`skip` in the log): rename it. Not in `class/subject/[chapter]/file.mp4` depth. `FAIL`/`WARNING` in the log: fix the file (setup guide §7) |
+| Lesson shows but will not play after files were moved or deleted | `lms-admin.sh check-media` | The next sync re-files moved lessons and archives deleted ones (cron runs with `--archive-missing`); a `FAIL` that persists means the file is really gone or unreadable |
 | "This lesson's video is not available" | API log `media_file_missing` | File moved/renamed/unreadable; `lms-admin.sh check-media` |
 | Video error after a long pause | Nginx media log status 410 | Signed URL expired; the app fetches a new one automatically (or on **Try again**) |
 | Video 403 | Nginx media log status 403 | `MEDIA_SIGNING_SECRET` differs between API and Nginx: fix `.env`, then `docker compose up -d` (a plain `restart` keeps the old value). Or the file is not readable by Nginx |

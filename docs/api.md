@@ -97,7 +97,7 @@ are still available, newest first:
 {
   "video_id": "uuid",
   "title": "Lesson 2: Python Functions",
-  "playback_url": "http://192.168.10.10/media/class12/computer-science/lesson-02.mp4?expires=1792076400&sid=…&md5=…",
+  "playback_url": "http://192.168.10.10/media/class12/computer-science/01-python-basics/02-python-functions.mp4?expires=1792076400&sid=…&md5=…",
   "expires_at": "2026-10-15T16:00:00Z",
   "duration_seconds": 480,
   "mime_type": "video/mp4",

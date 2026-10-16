@@ -211,6 +211,104 @@ def test_sync_videos_builds_the_catalogue_from_folders(db, catalog, capsys):
     assert db.get(Video, videos["class10/general-science/quick-revision.mp4"].id).status == "archived"
 
 
+def _private_root(monkeypatch, tmp_path):
+    """Point the CLI at an empty video folder of its own (VIDEO_ROOT is shared by all tests)."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(cli, "get_settings", lambda: SimpleNamespace(video_root=tmp_path))
+
+    def write(key: str, **kwargs):
+        from .mp4_builder import build_mp4
+
+        path = tmp_path.joinpath(*key.split("/"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(build_mp4(**kwargs))
+        return path
+
+    return tmp_path, write
+
+
+def test_sync_videos_follows_moved_renamed_and_replaced_files(db, catalog, tmp_path, monkeypatch, capsys):
+    from app.models import StudentVideoProgress
+
+    root, write = _private_root(monkeypatch, tmp_path)
+    write("class9/maths/01-algebra/01-linear-equations.mp4", duration_seconds=300, mdat_bytes=5000)
+    write("class9/maths/01-algebra/02-quadratics.mp4", duration_seconds=240, mdat_bytes=7000)
+    algebra = root / "class9" / "maths" / "01-algebra"
+    (algebra / "02-quadratics.txt").write_text("Quadratic Equations: an introduction\n", encoding="utf-8")
+    assert cli.cmd_sync_videos(db, args(publish=True, archive_missing=False)) == 0
+    db.commit()
+    linear = db.scalar(select(Video).where(Video.storage_key == "class9/maths/01-algebra/01-linear-equations.mp4"))
+    quadratics = db.scalar(select(Video).where(Video.storage_key == "class9/maths/01-algebra/02-quadratics.mp4"))
+    assert linear.title == "Linear Equations" and quadratics.title == "Quadratic Equations: an introduction"
+    db.add(StudentVideoProgress(student_id=catalog.student.id, video_id=linear.id,
+                                position_seconds=120, duration_seconds=300))
+    db.commit()
+
+    # The teacher renames the chapter folder and one file, and moves the other lesson to a new chapter.
+    basics = algebra.parent / "02-algebra-basics"
+    algebra.rename(basics)
+    (basics / "01-linear-equations.mp4").rename(basics / "01-linear-equations-in-one-variable.mp4")
+    polynomials = algebra.parent / "03-polynomials"
+    polynomials.mkdir()
+    (basics / "02-quadratics.mp4").rename(polynomials / "01-quadratics.mp4")
+    (basics / "02-quadratics.txt").unlink()
+    assert cli.cmd_sync_videos(db, args(publish=True, archive_missing=True)) == 0
+    db.commit()
+
+    assert db.scalar(select(func.count()).select_from(Video).where(Video.storage_key.like("class9/%"))) == 2
+    linear = db.get(Video, linear.id)
+    assert linear.storage_key == "class9/maths/02-algebra-basics/01-linear-equations-in-one-variable.mp4"
+    assert linear.title == "Linear Equations In One Variable"  # an automatic name follows the file name
+    assert linear.status == "published" and linear.sort_order == 1
+    assert db.get(Chapter, linear.chapter_id).title == "Algebra Basics"
+    assert db.get(Chapter, linear.chapter_id).sort_order == 2
+    quadratics = db.get(Video, quadratics.id)
+    assert quadratics.storage_key == "class9/maths/03-polynomials/01-quadratics.mp4"
+    assert quadratics.title == "Quadratic Equations: an introduction"  # a custom title is kept
+    assert quadratics.sort_order == 1
+    assert db.get(Chapter, quadratics.chapter_id).title == "Polynomials"
+    progress = db.scalar(select(StudentVideoProgress).where(StudentVideoProgress.video_id == linear.id))
+    assert progress.position_seconds == 120  # progress travelled with the file
+    out = capsys.readouterr().out
+    assert "~ moved class9/maths/01-algebra/01-linear-equations.mp4 ->" in out
+    assert "2 moved" in out and "0 archived" in out
+
+    # A file replaced in place (re-encoded, or a copy that has finished) gets fresh metadata.
+    write("class9/maths/03-polynomials/01-quadratics.mp4", duration_seconds=900, mdat_bytes=9000)
+    assert cli.cmd_sync_videos(db, args(publish=True, archive_missing=True)) == 0
+    db.commit()
+    assert db.get(Video, quadratics.id).duration_seconds == 900
+    assert db.get(Video, quadratics.id).file_size_bytes == (root / "class9/maths/03-polynomials/01-quadratics.mp4").stat().st_size
+    assert "~ updated class9/maths/03-polynomials/01-quadratics.mp4" in capsys.readouterr().out
+
+
+def test_sync_videos_does_not_guess_between_identical_files(db, catalog, tmp_path, monkeypatch):
+    root, write = _private_root(monkeypatch, tmp_path)
+    write("class9/maths/01-algebra/01-a.mp4", duration_seconds=300, mdat_bytes=5000)
+    cli.cmd_sync_videos(db, args(publish=True, archive_missing=False))
+    db.commit()
+    original = db.scalar(select(Video).where(Video.storage_key == "class9/maths/01-algebra/01-a.mp4"))
+
+    # Two identical copies appear while the original disappears: nothing tells them apart.
+    (root / "class9" / "maths" / "01-algebra" / "01-a.mp4").unlink()
+    write("class9/maths/01-algebra/01-b.mp4", duration_seconds=300, mdat_bytes=5000)
+    write("class9/maths/01-algebra/01-c.mp4", duration_seconds=300, mdat_bytes=5000)
+    cli.cmd_sync_videos(db, args(publish=True, archive_missing=True))
+    db.commit()
+    assert db.get(Video, original.id).status == "archived"
+    assert db.get(Video, original.id).storage_key == "class9/maths/01-algebra/01-a.mp4"
+    assert db.scalar(select(func.count()).select_from(Video).where(Video.storage_key.like("class9/%"))) == 3
+
+
+def test_sync_videos_never_archives_when_the_folder_is_empty(db, catalog, tmp_path, monkeypatch, capsys):
+    _private_root(monkeypatch, tmp_path)  # an empty folder, as after a storage disk failed to mount
+    assert cli.cmd_sync_videos(db, args(publish=True, archive_missing=True)) == 0
+    db.commit()
+    assert db.get(Video, catalog.lesson1.id).status == "published"
+    assert "nothing archived" in capsys.readouterr().out
+
+
 def test_lookup_by_path(db, catalog):
     assert cli.find_chapter(db, "Class 12/Computer Science/Basics").id == catalog.basics.id
     with pytest.raises(cli.CliError):

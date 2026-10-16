@@ -3,7 +3,7 @@
 #   deploy/scripts/lms-admin.sh tree
 #   deploy/scripts/lms-admin.sh sync-videos --publish     # register files copied into the video folders
 #   deploy/scripts/lms-admin.sh scan-videos
-#   deploy/scripts/lms-admin.sh publish-video class12/computer-science/lesson-04.mp4
+#   deploy/scripts/lms-admin.sh publish-video class12/computer-science/01-python-basics/04-dictionaries.mp4
 #   printf '%s\n' "$PW" | deploy/scripts/lms-admin.sh create-student ... --password-stdin
 #   deploy/scripts/lms-admin.sh --help
 set -euo pipefail

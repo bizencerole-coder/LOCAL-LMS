@@ -21,6 +21,7 @@ import sys
 import uuid
 from datetime import timedelta
 from pathlib import Path
+from typing import NamedTuple
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import DataError, IntegrityError
@@ -488,6 +489,12 @@ def cmd_inspect_media(_: Session | None, args: argparse.Namespace) -> int:
 # gets a space ("class12" -> "Class 12"). A `title.txt` inside a class/subject/chapter
 # folder, or a `<video>.txt` next to a video (first line title, rest description),
 # overrides the derived name.
+#
+# A registered lesson follows its file: when the file is moved or renamed (same size and
+# duration, gone from the old path, present at exactly one new path) the lesson keeps its
+# row, status and the students' progress and is re-filed by the new folders. A file
+# replaced in place has its size/duration refreshed. A file that is gone is archived only
+# with --archive-missing, and never when the whole folder is empty (storage unmounted).
 
 _ORDER_PREFIX_RE = re.compile(r"^(\d{1,3})[-_. ]+(.+)$")
 
@@ -571,13 +578,60 @@ def _get_or_create_chapter(
     return item
 
 
+class _Placement(NamedTuple):
+    """Where a file belongs in the catalogue, read from its folder and file names."""
+
+    class_name: str
+    subject_order: int | None
+    subject_name: str
+    chapter_order: int | None
+    chapter_title: str
+    video_order: int | None
+    video_title: str
+
+    def __str__(self) -> str:
+        return f"{self.class_name} / {self.subject_name} / {self.chapter_title}"
+
+
+def _placement(root: Path, key: str) -> _Placement:
+    parts = key.split("/")
+    class_dir, subject_dir = parts[0], parts[1]
+    chapter_dir = parts[2] if len(parts) == 4 else None
+    class_name = _folder_title(root / class_dir, _display_name(class_dir)[1])
+    subject_order, subject_derived = _display_name(subject_dir)
+    subject_name = _folder_title(root / class_dir / subject_dir, subject_derived)
+    if chapter_dir is not None:
+        chapter_order, chapter_derived = _display_name(chapter_dir)
+        chapter_title = _folder_title(root / class_dir / subject_dir / chapter_dir, chapter_derived)
+    else:
+        chapter_order, chapter_title = 0, "Lessons"
+    video_order, video_title = _display_name(Path(parts[-1]).stem)
+    return _Placement(
+        class_name, subject_order, subject_name, chapter_order, chapter_title, video_order, video_title
+    )
+
+
+def _chapter_for(db: Session, place: _Placement, created: list[str]) -> Chapter:
+    school_class = _get_or_create_class(db, place.class_name, created)
+    subject = _get_or_create_subject(db, school_class, place.subject_name, place.subject_order, created)
+    return _get_or_create_chapter(db, subject, place.chapter_title, place.chapter_order, created)
+
+
+def _fingerprint(meta_or_video) -> tuple[int | None, int | None]:
+    """What identifies a file across a move: its size and duration."""
+    if isinstance(meta_or_video, dict):
+        return meta_or_video["file_size_bytes"], meta_or_video["duration_seconds"]
+    return meta_or_video.file_size_bytes, meta_or_video.duration_seconds
+
+
 def cmd_sync_videos(db: Session, args: argparse.Namespace) -> int:
-    """Register every MP4 under VIDEO_ROOT from the folder layout. Re-runnable."""
+    """Bring the catalogue in line with the files under VIDEO_ROOT. Re-runnable."""
     root = get_settings().video_root
     registered = {v.storage_key: v for v in db.scalars(select(Video))}
     created: list[str] = []
     seen: set[str] = set()
-    added = skipped = problems = 0
+    new_files: list[tuple[str, Path, dict, list[str]]] = []
+    skipped = failed = updated = problems = 0
 
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in ALLOWED_EXTENSIONS:
@@ -589,39 +643,78 @@ def cmd_sync_videos(db: Session, args: argparse.Namespace) -> int:
             print(f"skip  {key}: {exc}")
             skipped += 1
             continue
-        parts = key.split("/")
-        if len(parts) < 3 or len(parts) > 4:
+        if not 3 <= len(key.split("/")) <= 4:
             print(f"skip  {key}: expected <class>/<subject>/[<chapter>/]<video>.mp4")
             skipped += 1
             continue
         seen.add(key)
-        if key in registered:
+        video = registered.get(key)
+        if video is not None and video.file_size_bytes == path.stat().st_size:
             continue
-
-        class_dir, subject_dir = parts[0], parts[1]
-        chapter_dir = parts[2] if len(parts) == 4 else None
-        class_name = _folder_title(root / class_dir, _display_name(class_dir)[1])
-        subject_order, subject_derived = _display_name(subject_dir)
-        subject_name = _folder_title(root / class_dir / subject_dir, subject_derived)
-        if chapter_dir is not None:
-            chapter_order, chapter_derived = _display_name(chapter_dir)
-            chapter_title = _folder_title(root / class_dir / subject_dir / chapter_dir, chapter_derived)
-        else:
-            chapter_order, chapter_title = 0, "Lessons"
-        video_order, video_derived = _display_name(path.stem)
-        title, description = _sidecar(path)
-        title = title or video_derived
-
         try:
             _, meta, file_problems = inspect_video_file(key)
         except CliError as exc:
             print(f"FAIL  {key}: {exc}")
+            failed += 1
             problems += 1
             continue
+        if video is None:
+            new_files.append((key, path, meta, file_problems))
+            continue
+        # The file was replaced (or has finished copying): refresh what the app shows.
+        for field_name, value in meta.items():
+            setattr(video, field_name, value)
+        updated += 1
+        print(
+            f"~ updated {key} (file changed: {_fmt_duration(meta['duration_seconds'])}, "
+            f"{meta['file_size_bytes']} bytes)"
+        )
+        for problem in file_problems:
+            problems += 1
+            print(f"      WARNING: {problem}")
 
-        school_class = _get_or_create_class(db, class_name, created)
-        subject = _get_or_create_subject(db, school_class, subject_name, subject_order, created)
-        chapter = _get_or_create_chapter(db, subject, chapter_title, chapter_order, created)
+    # Moved or renamed files: a lesson whose file is gone, matched to exactly one new file of
+    # the same size and duration, keeps its row (and the students' progress) and is re-filed.
+    missing = [v for k, v in registered.items() if k not in seen and v.status != VideoStatus.ARCHIVED.value]
+    moved = 0
+    if missing and new_files:
+        gone: dict[tuple, list[Video]] = {}
+        for video in missing:
+            gone.setdefault(_fingerprint(video), []).append(video)
+        arrived: dict[tuple, list[tuple[str, Path, dict, list[str]]]] = {}
+        for entry in new_files:
+            arrived.setdefault(_fingerprint(entry[2]), []).append(entry)
+        for fingerprint, old_videos in gone.items():
+            new_entries = arrived.get(fingerprint, [])
+            if len(old_videos) != 1 or len(new_entries) != 1:
+                continue  # nothing to tell them apart: treat as new files (and removals)
+            video, entry = old_videos[0], new_entries[0]
+            key, path, meta, _ = entry
+            old_key = video.storage_key
+            place = _placement(root, key)
+            video.chapter_id = _chapter_for(db, place, created).id
+            title, description = _sidecar(path)
+            if title:
+                video.title, video.description = title, description
+            elif video.title == _display_name(Path(old_key).stem)[1]:
+                video.title = place.video_title  # an automatic name follows the file name
+            if place.video_order is not None:
+                video.sort_order = place.video_order
+            for field_name, value in meta.items():
+                setattr(video, field_name, value)
+            video.storage_key = key
+            db.flush()
+            missing.remove(video)
+            new_files.remove(entry)
+            moved += 1
+            print(f"~ moved {old_key} -> {key}  [{video.status}] {place} / {video.title}")
+
+    added = 0
+    for key, path, meta, file_problems in new_files:
+        place = _placement(root, key)
+        title, description = _sidecar(path)
+        title = title or place.video_title
+        chapter = _chapter_for(db, place, created)
         status = VideoStatus.PUBLISHED if (args.publish and not file_problems) else VideoStatus.DRAFT
         db.add(
             Video(
@@ -629,33 +722,35 @@ def cmd_sync_videos(db: Session, args: argparse.Namespace) -> int:
                 title=title,
                 description=description,
                 storage_key=key,
-                sort_order=video_order or 0,
+                sort_order=place.video_order or 0,
                 status=status.value,
                 **meta,
             )
         )
         db.flush()
         added += 1
-        print(f"+ [{status.value}] {class_name} / {subject_name} / {chapter_title} / {title}  ({key})")
+        print(f"+ [{status.value}] {place} / {title}  ({key})")
         for problem in file_problems:
             problems += 1
             print(f"      WARNING: {problem}")
 
     archived = 0
-    if args.archive_missing:
-        for key, video in registered.items():
-            if key not in seen and video.status != VideoStatus.ARCHIVED.value:
+    if args.archive_missing and missing:
+        if not seen:
+            print("WARNING: no video files found under VIDEO_ROOT; nothing archived (is the storage mounted?)")
+        else:
+            for video in missing:
                 video.status = VideoStatus.ARCHIVED.value
                 archived += 1
-                print(f"- archived {key} (file not found)")
+                print(f"- archived {video.storage_key} (file not found)")
 
     for line in created:
         print(f"+ {line}")
     print(
         f"Sync complete: {added} video(s) registered"
         f"{' and published' if args.publish else ' as draft'}, "
-        f"{len(seen) - added} already registered, {skipped} skipped, {problems} with problems, "
-        f"{archived} archived."
+        f"{moved} moved, {updated} updated, {len(seen) - added - moved - failed} already registered, "
+        f"{skipped} skipped, {problems} with problems, {archived} archived."
     )
     if added and not args.publish:
         print("Check them in the app or with 'tree', then publish with: publish-video <storage key>")

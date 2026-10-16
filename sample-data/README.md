@@ -7,13 +7,13 @@ No video files are stored in the repository (`*.mp4` is git-ignored).
 `deploy/scripts/make_test_videos.sh <VIDEO_ROOT> [--short]` generates the five files the
 demo catalogue (`backend/seed/demo_catalog.json`) expects:
 
-| Storage key | Length | Seeded as |
+| Storage key (same layout as `sync-videos`: class/subject/NN-chapter/NN-lesson.mp4) | Length | Seeded as |
 |---|---|---|
-| `class12/computer-science/lesson-01.mp4` | 3 min | published |
-| `class12/computer-science/lesson-02.mp4` | 8 min | published |
-| `class12/computer-science/lesson-03-draft.mp4` | 2 min | draft (must stay invisible) |
-| `class12/mathematics/lesson-01.mp4` | 32 min (5 min with `--short`) | published (30-minute test) |
-| `class11/physics/lesson-01.mp4` | 3 min | published, Class 11 only |
+| `class12/computer-science/01-python-basics/01-variables-and-types.mp4` | 3 min | published |
+| `class12/computer-science/01-python-basics/02-python-functions.mp4` | 8 min | published |
+| `class12/computer-science/01-python-basics/03-loops.mp4` | 2 min | draft (must stay invisible) |
+| `class12/mathematics/01-calculus/01-limits-and-continuity.mp4` | 32 min (5 min with `--short`) | published (30-minute test) |
+| `class11/physics/01-motion/01-speed-and-velocity.mp4` | 3 min | published, Class 11 only |
 
 Each is H.264 High + AAC, 1280×720, 30 fps, ~1.2 Mbps, 2-second keyframes, fast-start,
 with the lesson name and a running `hh:mm:ss` timestamp burned in so seek and resume
