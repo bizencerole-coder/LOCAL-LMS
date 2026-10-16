@@ -16,6 +16,32 @@ repurpose a disk without the owner's approval (PRD §11.1).
 | Network | Fixed private IP for the host (example `192.168.10.10`) or local DNS name |
 | Tablets | Android 7.0+ (API 24), on an SSID that can reach the host |
 
+## Quick install (script)
+
+`deploy/install.sh` runs sections 2–6 and 8 below as one command on a fresh Debian 12/13,
+Ubuntu 24.04 or OMV 7/8 host. Run it as the sudo-capable operator account, from the checkout:
+
+```bash
+deploy/install.sh --dry-run                                    # show what would be done; changes nothing
+deploy/install.sh --allow 192.168.10.0/24 --firewall --demo    # fresh host: Docker, folders, .env, access control, stack, demo data
+deploy/install.sh --video-root /srv/dev-disk-by-uuid-XXXX/campus-lms/videos \
+    --media-base-url http://lms.campus.lan --allow 192.168.10.0/24    # OMV shared folder, local DNS name
+```
+
+It checks the prerequisites (64-bit Linux, `curl`, Python 3.10+, free disk, sudo), installs
+Docker with the official script after asking, creates `VIDEO_ROOT` and the backup folder
+(folders only: it never formats, partitions or mounts a disk, and refuses an OMV
+`/srv/dev-disk-by-*` path whose disk is not mounted), writes `deploy/.env` with generated
+secrets (mode 600) and the host's LAN address as `MEDIA_BASE_URL`, narrows
+`nginx/allowlist.conf` to the `--allow` subnets, adds the `DOCKER-USER` rule with
+`--firewall` (re-applied after every boot and Docker restart by the systemd unit
+`campus-lms-firewall.service`), starts the stack, waits until all three services are healthy,
+optionally seeds the demo content, and ends with `scripts/check_stack.sh` and the next steps.
+Every step is skipped when it is already done, so the script can be re-run; an existing `.env`
+or a hand-edited allowlist is replaced only with `--force` (a copy is kept in `deploy/backups/`).
+`deploy/install.sh --help` lists all options. The sections below remain the reference for what
+the script does and for doing it by hand.
+
 ## 2. Fresh Linux host
 
 ```bash
@@ -85,6 +111,10 @@ nano .env
        ! -s 192.168.10.0/24 -j DROP      # repeat with each allowed subnet before the DROP, or use an ipset
    sudo apt install iptables-persistent   # keeps the rule across reboots
    ```
+
+   `deploy/install.sh --firewall --allow <subnet> ...` writes the same rules to
+   `/usr/local/sbin/campus-lms-firewall` and a systemd unit that re-applies them after each
+   boot and Docker restart, which also works on OMV without `iptables-persistent`.
 
 PostgreSQL and the API publish no ports; the database is on an internal Docker network
 that only the API can reach.

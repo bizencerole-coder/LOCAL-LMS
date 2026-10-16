@@ -21,9 +21,23 @@ through the API. See [docs/architecture.md](docs/architecture.md).
 |---|---|
 | `backend/` | FastAPI app (`app/`), Alembic migrations, admin CLI, demo seed manifest, tests |
 | `mobile/` | Flutter Android app (student UI and player) |
-| `deploy/` | `compose.yaml`, `.env.example`, Nginx config, operator scripts |
+| `deploy/` | `compose.yaml`, `.env.example`, Nginx config, `install.sh`, operator scripts |
 | `docs/` | PRD, setup, architecture, API, testing, troubleshooting, backup/restore, M0 inventory |
 | `sample-data/` | How the demo test videos are generated |
+
+## Quick install (fresh Linux host)
+
+```bash
+deploy/install.sh --dry-run                                   # show what would be done; changes nothing
+deploy/install.sh --allow 192.168.10.0/24 --firewall --demo   # Docker, folders, .env, access control, stack, demo data
+```
+
+One command for a fresh Debian 12/13, Ubuntu 24.04 or OpenMediaVault 7/8 host, run as the
+sudo-capable operator account (setup guide sections 2–6 and 8). `--video-root` points it at an
+OMV shared folder, `--media-base-url` sets a local DNS name, `--help` lists the rest. It creates
+folders only and never touches disks; it can be re-run, and replaces an existing `.env` or
+allowlist only with `--force`. The manual steps below and in
+[docs/setup-guide.md](docs/setup-guide.md) remain the reference.
 
 ## Quick start (any Linux host or Docker Desktop)
 
