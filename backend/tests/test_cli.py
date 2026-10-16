@@ -241,6 +241,7 @@ def test_sync_videos_follows_moved_renamed_and_replaced_files(db, catalog, tmp_p
     linear = db.scalar(select(Video).where(Video.storage_key == "class9/maths/01-algebra/01-linear-equations.mp4"))
     quadratics = db.scalar(select(Video).where(Video.storage_key == "class9/maths/01-algebra/02-quadratics.mp4"))
     assert linear.title == "Linear Equations" and quadratics.title == "Quadratic Equations: an introduction"
+    algebra_chapter_id = linear.chapter_id
     db.add(StudentVideoProgress(student_id=catalog.student.id, video_id=linear.id,
                                 position_seconds=120, duration_seconds=300))
     db.commit()
@@ -270,9 +271,11 @@ def test_sync_videos_follows_moved_renamed_and_replaced_files(db, catalog, tmp_p
     assert db.get(Chapter, quadratics.chapter_id).title == "Polynomials"
     progress = db.scalar(select(StudentVideoProgress).where(StudentVideoProgress.video_id == linear.id))
     assert progress.position_seconds == 120  # progress travelled with the file
+    assert db.get(Chapter, algebra_chapter_id) is None  # emptied by the moves, so removed
     out = capsys.readouterr().out
     assert "~ moved class9/maths/01-algebra/01-linear-equations.mp4 ->" in out
-    assert "2 moved" in out and "0 archived" in out
+    assert "- removed empty chapter Maths/Algebra" in out
+    assert "2 moved" in out and "0 archived" in out and "1 empty chapter(s) removed" in out
 
     # A file replaced in place (re-encoded, or a copy that has finished) gets fresh metadata.
     write("class9/maths/03-polynomials/01-quadratics.mp4", duration_seconds=900, mdat_bytes=9000)

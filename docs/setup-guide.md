@@ -229,6 +229,7 @@ The sync keeps a lesson tied to its file, so you can tidy the share freely:
 | You do this in the share | The next sync does this |
 |---|---|
 | Rename a file or folder, or move a file to another subject/chapter folder | The lesson keeps its status and every student's progress, moves to the new chapter, and takes the new order number. A name that was derived from the file name follows the new name; a title set by `<lesson>.txt`, the seed or `add-video` is kept. Shown as `~ moved`. |
+| Move the last lesson out of a chapter folder | The now-empty chapter disappears from the app, and comes back as soon as a file is placed in that folder again. |
 | Replace a file with a new version (same name) | Size and duration are refreshed. Shown as `~ updated`. |
 | Delete a file | With `--archive-missing` the lesson is archived (hidden from the app; progress is kept). Without it the lesson stays listed and fails to play. |
 | Delete the file and copy the same file in two places | Treated as a removal and two new lessons: a move is only recognised when exactly one file of that size and duration disappears and exactly one appears. |

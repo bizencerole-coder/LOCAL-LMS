@@ -677,6 +677,7 @@ def cmd_sync_videos(db: Session, args: argparse.Namespace) -> int:
     # the same size and duration, keeps its row (and the students' progress) and is re-filed.
     missing = [v for k, v in registered.items() if k not in seen and v.status != VideoStatus.ARCHIVED.value]
     moved = 0
+    emptied: set[uuid.UUID] = set()  # chapters a move took a lesson out of
     if missing and new_files:
         gone: dict[tuple, list[Video]] = {}
         for video in missing:
@@ -690,9 +691,11 @@ def cmd_sync_videos(db: Session, args: argparse.Namespace) -> int:
                 continue  # nothing to tell them apart: treat as new files (and removals)
             video, entry = old_videos[0], new_entries[0]
             key, path, meta, _ = entry
-            old_key = video.storage_key
+            old_key, old_chapter_id = video.storage_key, video.chapter_id
             place = _placement(root, key)
             video.chapter_id = _chapter_for(db, place, created).id
+            if video.chapter_id != old_chapter_id:
+                emptied.add(old_chapter_id)
             title, description = _sidecar(path)
             if title:
                 video.title, video.description = title, description
@@ -734,6 +737,19 @@ def cmd_sync_videos(db: Session, args: argparse.Namespace) -> int:
             problems += 1
             print(f"      WARNING: {problem}")
 
+    # A chapter whose last lesson was moved away disappears with it (it comes back from the
+    # folder as soon as a file is placed there again).
+    removed = 0
+    for chapter_id in emptied:
+        if db.scalar(select(func.count()).select_from(Video).where(Video.chapter_id == chapter_id)):
+            continue
+        chapter = db.get(Chapter, chapter_id)
+        if chapter is not None:
+            print(f"- removed empty chapter {db.get(Subject, chapter.subject_id).name}/{chapter.title}")
+            db.delete(chapter)
+            removed += 1
+    db.flush()
+
     archived = 0
     if args.archive_missing and missing:
         if not seen:
@@ -750,7 +766,8 @@ def cmd_sync_videos(db: Session, args: argparse.Namespace) -> int:
         f"Sync complete: {added} video(s) registered"
         f"{' and published' if args.publish else ' as draft'}, "
         f"{moved} moved, {updated} updated, {len(seen) - added - moved - failed} already registered, "
-        f"{skipped} skipped, {problems} with problems, {archived} archived."
+        f"{skipped} skipped, {problems} with problems, {archived} archived, "
+        f"{removed} empty chapter(s) removed."
     )
     if added and not args.publish:
         print("Check them in the app or with 'tree', then publish with: publish-video <storage key>")
