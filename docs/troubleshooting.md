@@ -17,6 +17,7 @@ address tablets use); it checks each layer in order and exits non-zero on any fa
 | Video error after a long pause | Nginx media log status 410 | Signed URL expired; the app fetches a new one automatically (or on **Try again**) |
 | Video 403 | Nginx media log status 403 | `MEDIA_SIGNING_SECRET` differs between API and Nginx: fix `.env`, then `docker compose up -d` (a plain `restart` keeps the old value). Or the file is not readable by Nginx |
 | Video 404 | `docker compose logs nginx \| grep '"type":"media"' \| grep '"status":404'` | File missing on disk while DB says it exists; `lms-admin.sh check-media` |
+| Windows: "cannot access `\\server\campus-lms`" (0x80070043) | On the server: `systemctl is-active smbd` | Samba not running. In OMV, *Services → SMB/CIFS → Settings → Enabled* must be ticked and applied; the save is refused if the hostname is longer than 15 characters (*Network → General*, e.g. `lms`). "Access is denied" instead means use the `lmsadmin` credentials |
 | App: "The campus server is busy" (503 `service_busy`) | API log `admission_timeout` / `db_pool_exhausted` | More simultaneous requests than one worker admits (default 30). Raise `WEB_CONCURRENCY`, or `DB_POOL_SIZE`/`DB_MAX_OVERFLOW` if PostgreSQL has room |
 | Slow start / buffering | `inspect_media.py file.mp4` | Not fast-start (re-mux with `-movflags +faststart`), bitrate too high; then Wi-Fi signal/AP load; then server NIC/disk |
 | Works with WAN, fails without | Tablet Wi-Fi settings | Uses a public DNS name; "switch to mobile data"/"avoid bad Wi-Fi" enabled; captive portal |

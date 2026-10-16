@@ -5,7 +5,8 @@ knows which hardware will be used and has a backup plan before making storage ch
 
 ## Server candidate
 
-Recorded 16 Oct 2026 over SSH (old office PC reinstalled with OMV, hostname `openmediavaultlms`):
+Recorded 16 Oct 2026 over SSH (old office PC reinstalled with OMV; hostname `lms` — shortened from
+the installer's `openmediavaultlms` because Samba refuses hostnames longer than 15 characters):
 
 | Item | Value |
 |---|---|

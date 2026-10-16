@@ -60,6 +60,9 @@ record such as `lms.campus.lan`. Do not rely on public DNS (FR-10).
 
 ## 3. Existing OpenMediaVault host
 
+0. Give the machine a hostname of **15 characters or fewer** (*Network → General*, e.g. `lms`):
+   Samba refuses to start with a longer one, and the OMV installer's default
+   (`openmediavaultlms`) is 17.
 1. In OMV, create a shared folder for the LMS media, e.g. `campus-lms` on the data disk.
    Note its absolute path: *Storage → Shared Folders* shows it as
    `/srv/dev-disk-by-uuid-<UUID>/campus-lms`. Create `videos/` inside it.
