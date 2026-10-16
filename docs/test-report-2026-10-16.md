@@ -45,6 +45,31 @@ throttle (10/min + 5) applied to the single load host; the harness retried and e
 client signed in. These runs exercise the API, Nginx and disk only — the 50- and 100-client
 stages and all Wi-Fi measurements must be done on the campus network (PRD §14.4, §15.3).
 
+## First run on the OMV host and a physical tablet (16 Oct 2026, office LAN)
+
+Host: the old office PC from [m0-inventory.md](m0-inventory.md) (Core i3-2100, 7.7 GB, one 1 TB
+HDD), OpenMediaVault 8.5 on Debian 13, installed with `deploy/install.sh` (first real run of the
+script; it also exposed and fixed two host issues: OMV's own web UI held port 80 and was moved
+to 8081, and Nginx had to be restarted once because it started before Docker DNS could resolve
+`api`). Tablet: realme Pad 2 (RMP2204, Android 14) on Wi-Fi `OFFIZE-NET`, 172.18.2.46/23;
+server on 172.18.1.169/24; the segments are routed through 172.18.1.1.
+
+| Test | Result |
+|---|---|
+| `scripts/check_stack.sh` on the host | ALL CHECKS PASSED (5 videos, DB, storage, HTTP) |
+| `smoke_test.py` from a Windows laptop on the LAN against `http://172.18.1.169` | **29/29** — login 144 ms, playback authorization 40 ms, first byte of Range requests 15–27 ms |
+| App on the tablet: sign-in, browse, play Lesson 1 | **works** — streams from the OMV host; wrong-password error shown correctly first |
+| Resume across devices (AC-06/AC-09) | **works** — smoke test saved 42 s for `demo.student`; the tablet opened the lesson at 0:39 ("Resuming from 0:39") |
+| AC-11 (no public dependency) | app start, sign-in and playback used only `172.18.1.169` (Nginx log) |
+| Player checklist (seek, speed, full-screen, pause, rotate), T-14 WAN unplugged, T-17 two tablets, 30-minute run | **not yet run** — next on site |
+
+Network finding: Nginx logs every client as `172.18.1.1` (the router NATs the tablet segment onto
+the server segment). Consequences for the pilot: the per-IP login throttle (10/min + 5) is shared
+by *all* tablets behind that router, so a class signing in together would see 429s, and the
+allowlist/logs cannot tell tablets apart. Fix for the campus deployment: put the LMS host on the
+same network as the tablets, or have the router route (not NAT) between the segments. Until then,
+raise the login limit in `site.conf.template` if more than ~10 tablets sign in within a minute.
+
 ## Review findings and fixes
 
 A multi-agent code review (6 reviewers + adversarial verification) and a live probe of the
