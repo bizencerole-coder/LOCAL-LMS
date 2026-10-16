@@ -1,0 +1,102 @@
+# Campus LMS prototype stack: PostgreSQL + FastAPI + Nginx on one host.
+#
+#   cp .env.example .env    # then edit the secrets and VIDEO_ROOT
+#   docker compose up -d --build
+#
+# Only Nginx publishes a port. PostgreSQL is on an internal network that only the
+# API can reach; the API is reachable only by Nginx (PRD 11.5).
+
+name: campus-lms
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "10"
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-campus_lms}
+      POSTGRES_USER: ${POSTGRES_USER:-campus_lms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt: ["no-new-privileges:true"]
+    networks: [data]
+    logging: *logging
+
+  api:
+    build: ../backend
+    image: campus-lms-api:${LMS_VERSION:-dev}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-campus_lms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-campus_lms}
+      VIDEO_ROOT: /srv/campus-lms/videos
+      MEDIA_SIGNING_SECRET: ${MEDIA_SIGNING_SECRET:?Set MEDIA_SIGNING_SECRET in deploy/.env}
+      MEDIA_BASE_URL: ${MEDIA_BASE_URL:-}
+      PLAYBACK_URL_TTL_SECONDS: ${PLAYBACK_URL_TTL_SECONDS:-7200}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-28800}
+      COMPLETION_THRESHOLD: ${COMPLETION_THRESHOLD:-0.9}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      ENABLE_API_DOCS: ${ENABLE_API_DOCS:-true}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      MIGRATE_ON_START: ${MIGRATE_ON_START:-true}
+    volumes:
+      - ${VIDEO_ROOT:?Set VIDEO_ROOT in deploy/.env}:/srv/campus-lms/videos:ro
+    # Runs as a non-root user with no capabilities and a read-only image.
+    user: lms
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [edge, data]
+    logging: *logging
+
+  nginx:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${LMS_HTTP_BIND:-0.0.0.0}:${LMS_HTTP_PORT:-80}:80"
+    environment:
+      MEDIA_SIGNING_SECRET: ${MEDIA_SIGNING_SECRET}
+      NGINX_ENVSUBST_FILTER: "^MEDIA_"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - ./nginx/allowlist.conf:/etc/nginx/lms/allowlist.conf:ro
+      - ${VIDEO_ROOT}:/srv/campus-lms/videos:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/nginx-health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    # The image starts as root to render templates and bind port 80, then drops to
+    # the nginx user; keep only the capabilities that needs.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID, DAC_OVERRIDE, NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    networks: [edge]
+    logging: *logging
+
+networks:
+  edge:
+  data:
+    internal: true
+
+volumes:
+  pgdata:

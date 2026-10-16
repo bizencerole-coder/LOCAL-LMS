@@ -1,0 +1,115 @@
+"""Request and response models for the student API (PRD section 9)."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=100, description="Username or student ID")
+    password: str = Field(min_length=1, max_length=256)
+
+
+class ClassInfo(BaseModel):
+    id: uuid.UUID
+    name: str
+
+
+class StudentSummary(BaseModel):
+    id: uuid.UUID
+    full_name: str
+    class_name: str | None
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    student: StudentSummary
+
+
+class MeResponse(BaseModel):
+    id: uuid.UUID
+    student_code: str
+    username: str
+    full_name: str
+    school_class: ClassInfo | None = Field(serialization_alias="class")
+
+
+class SubjectOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    sort_order: int
+    chapter_count: int
+    video_count: int
+
+
+class ChapterOut(BaseModel):
+    id: uuid.UUID
+    subject_id: uuid.UUID
+    title: str
+    description: str | None
+    sort_order: int
+    video_count: int
+
+
+class ProgressOut(BaseModel):
+    video_id: uuid.UUID
+    position_seconds: int
+    duration_seconds: int | None
+    is_completed: bool
+    last_watched_at: datetime | None
+
+
+class VideoOut(BaseModel):
+    id: uuid.UUID
+    chapter_id: uuid.UUID
+    title: str
+    description: str | None
+    duration_seconds: int | None
+    sort_order: int
+    progress: ProgressOut | None
+
+
+class VideoDetailOut(VideoOut):
+    chapter_title: str
+    subject_id: uuid.UUID
+    subject_name: str
+
+
+class RecentVideoOut(BaseModel):
+    video: VideoOut
+    chapter_title: str
+    subject_name: str
+
+
+class PlaybackResponse(BaseModel):
+    video_id: uuid.UUID
+    title: str
+    playback_url: str
+    expires_at: datetime
+    duration_seconds: int | None
+    mime_type: str
+    resume_position_seconds: int
+    is_completed: bool
+
+
+class ProgressUpdate(BaseModel):
+    # strict: JSON numbers only (no "123" strings or booleans), like the other schemas.
+    model_config = ConfigDict(strict=True)
+
+    position_seconds: float = Field(ge=0, le=7 * 24 * 3600)
+    duration_seconds: float | None = Field(default=None, ge=0, le=7 * 24 * 3600)
+    is_completed: bool = False
+
+
+class HealthOut(BaseModel):
+    status: str
+
+
+class ReadyOut(BaseModel):
+    status: str
+    checks: dict[str, str]

@@ -1,0 +1,123 @@
+# Campus LMS site. Rendered at container start by the official nginx image, which
+# substitutes the MEDIA_SIGNING_SECRET environment variable below. NGINX_ENVSUBST_FILTER
+# limits substitution to MEDIA_* variables, so Nginx's own $variables are untouched.
+
+upstream lms_api {
+    server api:8000;
+    keepalive 16;
+}
+
+# Per-client-IP login throttle (FR-01): 10 attempts/minute, short bursts allowed.
+limit_req_zone $binary_remote_addr zone=lms_login:10m rate=10r/m;
+limit_req_status 429;
+
+server {
+    listen 80 default_server;
+    server_name _;
+
+    # Source-address allowlist (lms/allowlist.conf). Docker-published ports bypass
+    # plain host firewalls (ufw/INPUT), so this is the in-stack control; see
+    # docs/setup-guide.md for host-level DOCKER-USER rules. Note: locations that
+    # answer with "return" (/nginx-health, the 404 catch-all, media signature errors)
+    # reply before allow/deny is evaluated; no API data or video bytes do.
+    include /etc/nginx/lms/allowlist.conf;
+
+    access_log /dev/stdout lms_json;
+
+    # Redirects keep the host and port the client used (the published port may not be 80).
+    absolute_redirect off;
+
+    # API responses carry personal data and signed URLs: never cache them.
+    # (location /media/ sets its own headers.)
+    add_header Cache-Control "no-store" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $http_host;
+    # Nginx is the only hop: overwrite, never append, so clients cannot spoof the
+    # address the API logs.
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Request-ID $request_id;
+    proxy_connect_timeout 5s;
+    proxy_read_timeout 30s;
+
+    location = /nginx-health {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location = /health { proxy_pass http://lms_api; }
+    location = /ready  { proxy_pass http://lms_api; }
+
+    location = /api/v1/auth/login {
+        limit_req zone=lms_login burst=5 nodelay;
+        proxy_pass http://lms_api;
+    }
+
+    location /api/ {
+        proxy_pass http://lms_api;
+    }
+
+    # Interactive API docs for the prototype (disable with ENABLE_API_DOCS=false).
+    # Swagger UI assets are served by the API itself, so /docs works without internet.
+    location = /docs         { proxy_pass http://lms_api; }
+    location /docs-assets/   { proxy_pass http://lms_api; }
+    location = /openapi.json { proxy_pass http://lms_api; }
+
+    # Video delivery (FR-04/FR-05). Requires a signed, unexpired URL issued by the API:
+    #   /media/<storage_key>?expires=<unix>&sid=<student>&md5=<signature>
+    # 403 = missing/invalid signature, 410 = expired. Nginx handles Range/206 natively.
+    location /media/ {
+        # Error-log lines contain the full request line, including a still-valid
+        # signature. Only critical errors are logged here; the JSON access log
+        # records uri, status and sid for every request, which is enough to diagnose
+        # missing files (404) and permission problems (403).
+        error_log /dev/stderr crit;
+        log_not_found off;
+
+        # "return" writes no error-log line, unlike limit_except's "access forbidden".
+        if ($request_method !~ ^(GET|HEAD)$) {
+            add_header Allow "GET, HEAD" always;
+            return 405;
+        }
+
+        secure_link $arg_md5,$arg_expires;
+        secure_link_md5 "$secure_link_expires$uri$arg_sid ${MEDIA_SIGNING_SECRET}";
+        if ($secure_link = "") {
+            add_header Cache-Control "no-store" always;
+            add_header X-Content-Type-Options "nosniff" always;
+            return 403;
+        }
+        if ($secure_link = "0") {
+            add_header Cache-Control "no-store" always;
+            add_header X-Content-Type-Options "nosniff" always;
+            return 410;
+        }
+
+        alias /srv/campus-lms/videos/;
+        autoindex off;
+
+        # Directories look like missing files, even to a valid-signature holder.
+        if (-d $request_filename) { return 404; }
+
+        types {
+            video/mp4 mp4 m4v;
+        }
+        default_type application/octet-stream;
+
+        # Applies to 200/206/304 only (no "always"): error pages must not be cached.
+        add_header Cache-Control "private, max-age=3600";
+        add_header X-Content-Type-Options "nosniff";
+
+        # Keep slow clients from holding many buffers; files are read with sendfile.
+        sendfile_max_chunk 2m;
+    }
+
+    # Nothing else is served: no directory listings, no other files.
+    location / {
+        return 404;
+    }
+}

@@ -1,0 +1,9 @@
+# Runtime dependencies, pinned to the versions tested with this prototype.
+fastapi==0.143.2
+uvicorn[standard]==0.54.0
+SQLAlchemy==2.1.4
+alembic==1.20.0
+psycopg[binary]==3.3.6
+argon2-cffi==25.1.0
+pydantic==2.14.1
+pydantic-settings==2.16.0
