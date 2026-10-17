@@ -141,6 +141,30 @@ content folder) can write all 10 content folders, so a delete can move the file 
 `.trash`. Pages opened before the upgrade still hold the empty token and must be reloaded;
 after a reload, the user's delete on the campus dashboard worked.
 
+### Upload titles and descriptions (17 Oct 2026, reported by the user)
+
+Three uploads on the campus dashboard all appeared as *Python Tutorial SnapYT.App* although
+a title and a description had been typed. The upload area had no fields for them, so each
+file was named after its file name; the only Title and Description fields on the page were
+the *Module settings* just below it, which the API log shows saved right after the uploads
+(`PUT /admin/upload/…`, then `POST /admin/modules/…`), leaving the module unchanged. The
+three items are the same video uploaded three times (same checksum).
+
+Fix (`fa80ab3`): every chosen or dropped file gets its own Title (filled in from the file
+name) and Description, and nothing is sent until **Upload** is pressed; a file that fails
+stays in the list to fix, retry or remove, and the page reloads by itself only when every
+file is in. The module's own fields are labelled *Module title* and *Module description*.
+Nginx refused a 2,000-character Malayalam description (about 18 KB once URL-encoded) with
+414: now `large_client_header_buffers 4 32k`. Upload descriptions are cleaned like the item
+page's (NUL removed), and on narrow screens wide tables scroll inside the page.
+
+| Check | Result |
+|---|---|
+| Backend tests | **140 passed**, including an upload with a title and a long Malayalam description (stored, written to the `.txt` file the folder sync reads, shown to students) and the module page's upload controls; both new tests fail on the old code |
+| Upload list in a browser (the module page as rendered by the app, uploads answered by a local stand-in for the API, as the browser was not signed in to the local dashboard) | Titles filled in from file names (*Loops And Conditions* from `02-loops_and-conditions.pdf`); a typed title and a Malayalam description arrived exactly as typed, with the CSRF header; a `.docx` refused in the list; a refused upload stays editable with its error (*Upload 1 file*); automatic reload only once every file is in; 375 px wide at phone width |
+| Nginx (local and campus server) | request line of 17–19 KB (longest title and description in Malayalam): 200, was 414 |
+| Campus server (~11:10) | `upgrade.sh --no-pull`: **UPGRADE COMPLETE**, all checks passed, folder sync resumed; the new upload script is served |
+
 ## Review findings and fixes
 
 A multi-agent code review (6 reviewers + adversarial verification) and a live probe of the
