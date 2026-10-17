@@ -138,7 +138,8 @@ Deployed to the campus server at ~10:10 with `git pull` and `upgrade.sh --no-pul
 **UPGRADE COMPLETE**, all containers healthy; a page rendered inside the server's API
 container carries the token in both of its forms; the API (uid 1000 / gid 100, owner of the
 content folder) can write all 10 content folders, so a delete can move the file into
-`.trash`. Pages opened before the upgrade still hold the empty token and must be reloaded.
+`.trash`. Pages opened before the upgrade still hold the empty token and must be reloaded;
+after a reload, the user's delete on the campus dashboard worked.
 
 ## Review findings and fixes
 
