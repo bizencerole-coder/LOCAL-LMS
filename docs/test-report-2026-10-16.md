@@ -1,4 +1,4 @@
-# Test report — 15–16 October 2026 (developer PC, Docker Desktop)
+# Test report — 15–17 October 2026 (developer PC, Docker Desktop, OMV host)
 
 **Scope:** verification of the framed prototype software on the development machine, before
 any on-site hardware exists. This covers everything that can be tested without the campus
@@ -71,6 +71,42 @@ by *all* tablets behind that router, so a class signing in together would see 42
 allowlist/logs cannot tell tablets apart. Fix for the campus deployment: put the LMS host on the
 same network as the tablets, or have the router route (not NAT) between the segments. Until then,
 raise the login limit in `site.conf.template` if more than ~10 tablets sign in within a minute.
+
+## Staff dashboard and the batch › module content model (17 Oct 2026, developer PC)
+
+Commit `bd6450a`. Tested on the local Docker stack, which still held the data of 15–16 Oct
+(2 classes, 29 students with progress), so the upgrade itself was exercised on real data.
+
+| Test | Result |
+|---|---|
+| Backend tests (pytest) | **136 passed**: student API, dashboard (sign-in, CSRF and Origin checks, uploads, moves, deletes, permissions, students, CSV import, staff), folder sync, CLI |
+| App tests | `flutter analyze` clean; **75** unit and widget tests passed |
+| Upgrade of the local database (migration 0002) | Batch *Batch 2026-27* created with both classes; every class, subject, module, item, student and progress row kept its ID; storage keys prefixed; the API moved the folders into `batch-2026-27/` on start; `check-media` 5/5 OK |
+| `smoke_test.py` | **33/33**, now including the dashboard sign-in redirect, PDF delivery (`application/pdf`) and the endpoints app 1.0 still uses |
+| Dashboard in a browser (local stack) | Sign-in, overview, content tree and module page render with live data; dropping a PDF and a PNG on the upload area uploads both through Nginx and publishes them; a `.docx` is refused in the browser; image preview through a signed media URL |
+| Dashboard file operations (scripted, local stack) | 27 MB video uploaded through Nginx in 0.4 s; notes moved to another subject's module (file and title file moved, progress kept); delete moved the file to `.trash`; a folder sync afterwards found nothing to change |
+| App end-to-end on the emulator | Sign-in, subjects → modules → videos with resume, notes viewer (*Page 1 of 3*), My Learning, sign-out: **passed** (42 s), before and after the visual refresh |
+| `deploy/scripts/upgrade.sh --no-pull` | Backup, settings kept, rebuild, all containers healthy, `check_stack.sh` ALL PASSED |
+
+Found and fixed during these tests:
+
+- The pages' Content-Security-Policy blocked the inline style that hid the icon sheet (a grey
+  band at the top of every page): now hidden with a stylesheet class.
+- Upload errors in the API's standard format showed as "[object Object]" in the upload list.
+- Renaming whole folders was refused on the Windows bind mount during the folder move: the
+  move now goes file by file, which works everywhere.
+- The API must run as the owner of the content folder, or uploads fail with a server error:
+  `LMS_CONTENT_UID`/`LMS_CONTENT_GID` (set by `install.sh` and `upgrade.sh`), a clear message
+  when a write is refused, and a warning on the dashboard naming the folder.
+- A folder sync starting during the upgrade could have archived items whose files were not
+  moved yet: the folder move now holds the lock the sync waits for.
+- The cron-pause pattern in `upgrade.sh` could never match (the sed delimiter was also the
+  regex alternation); verified with a pause/resume round trip.
+
+**Not done yet:** the campus server (172.18.1.169) did not answer on 17 Oct (switched off), so
+it is still on the 16 Oct version and the realme tablet still runs app 1.0.1. App 1.1.0 is
+built (`campus-lms-1.1.0-server-172.18.1.169.apk`) and goes on the tablet after
+`deploy/scripts/upgrade.sh` has run on the server.
 
 ## Review findings and fixes
 
