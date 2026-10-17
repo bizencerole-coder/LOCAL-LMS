@@ -16,4 +16,10 @@ class AppConfig {
 
   /// Time allowed for the player to open a video before showing an error.
   static const playerStartTimeout = Duration(seconds: 30);
+
+  /// Time allowed to download notes or an image (longer for big files, see ApiClient).
+  static const downloadTimeout = Duration(seconds: 60);
+
+  /// Largest notes (PDF) or image file the app downloads; it is held in memory while shown.
+  static const maxFileBytes = 100 * 1024 * 1024;
 }

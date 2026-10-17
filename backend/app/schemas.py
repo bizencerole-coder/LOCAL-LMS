@@ -1,4 +1,8 @@
-"""Request and response models for the student API (PRD section 9)."""
+"""Request and response models for the student API.
+
+The current app uses the module/content endpoints. The chapter/video models at the end
+keep earlier app versions working (videos only).
+"""
 
 from __future__ import annotations
 
@@ -13,15 +17,20 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
-class ClassInfo(BaseModel):
+class NamedRef(BaseModel):
     id: uuid.UUID
     name: str
+
+
+# Kept as a name for the class reference in /me.
+ClassInfo = NamedRef
 
 
 class StudentSummary(BaseModel):
     id: uuid.UUID
     full_name: str
     class_name: str | None
+    batch_name: str | None = None
 
 
 class LoginResponse(BaseModel):
@@ -36,15 +45,103 @@ class MeResponse(BaseModel):
     student_code: str
     username: str
     full_name: str
-    school_class: ClassInfo | None = Field(serialization_alias="class")
+    school_class: NamedRef | None = Field(serialization_alias="class")
+    batch: NamedRef | None = None
 
 
 class SubjectOut(BaseModel):
     id: uuid.UUID
     name: str
+    description: str | None = None
     sort_order: int
-    chapter_count: int
+    module_count: int
+    content_count: int
     video_count: int
+    notes_count: int
+    image_count: int
+    # How many of those items this student has completed (watched, or opened for notes/images).
+    completed_count: int = 0
+    # Older app versions read this name.
+    chapter_count: int
+
+
+class ModuleOut(BaseModel):
+    id: uuid.UUID
+    subject_id: uuid.UUID
+    title: str
+    description: str | None
+    sort_order: int
+    content_count: int
+    video_count: int
+    notes_count: int
+    image_count: int
+    completed_count: int = 0
+
+
+class ContentProgressOut(BaseModel):
+    content_id: uuid.UUID
+    position_seconds: int
+    duration_seconds: int | None
+    is_completed: bool
+    last_watched_at: datetime | None
+
+
+class ContentOut(BaseModel):
+    id: uuid.UUID
+    module_id: uuid.UUID
+    type: str
+    title: str
+    description: str | None
+    sort_order: int
+    duration_seconds: int | None
+    file_size_bytes: int | None
+    progress: ContentProgressOut | None
+
+
+class ContentDetailOut(ContentOut):
+    module_title: str
+    subject_id: uuid.UUID
+    subject_name: str
+
+
+class ContinueItemOut(BaseModel):
+    content: ContentOut
+    module_title: str
+    subject_name: str
+
+
+class ContentAccessOut(BaseModel):
+    content_id: uuid.UUID
+    type: str
+    title: str
+    url: str
+    expires_at: datetime
+    mime_type: str
+    duration_seconds: int | None
+    file_size_bytes: int | None
+    resume_position_seconds: int
+    is_completed: bool
+
+
+class ProgressUpdate(BaseModel):
+    # strict: JSON numbers only (no "123" strings or booleans), like the other schemas.
+    model_config = ConfigDict(strict=True)
+
+    position_seconds: float = Field(ge=0, le=7 * 24 * 3600)
+    duration_seconds: float | None = Field(default=None, ge=0, le=7 * 24 * 3600)
+    is_completed: bool = False
+
+
+class HealthOut(BaseModel):
+    status: str
+
+
+class ReadyOut(BaseModel):
+    status: str
+    checks: dict[str, str]
+
+
+# --------------------------------------------------------------- legacy (app <= 1.0.x)
 
 
 class ChapterOut(BaseModel):
@@ -95,21 +192,3 @@ class PlaybackResponse(BaseModel):
     mime_type: str
     resume_position_seconds: int
     is_completed: bool
-
-
-class ProgressUpdate(BaseModel):
-    # strict: JSON numbers only (no "123" strings or booleans), like the other schemas.
-    model_config = ConfigDict(strict=True)
-
-    position_seconds: float = Field(ge=0, le=7 * 24 * 3600)
-    duration_seconds: float | None = Field(default=None, ge=0, le=7 * 24 * 3600)
-    is_completed: bool = False
-
-
-class HealthOut(BaseModel):
-    status: str
-
-
-class ReadyOut(BaseModel):
-    status: str
-    checks: dict[str, str]

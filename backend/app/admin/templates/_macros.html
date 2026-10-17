@@ -1,0 +1,72 @@
+{% macro icon(name, cls="") -%}
+<svg class="icon {{ cls }}" aria-hidden="true"><use href="#i-{{ name }}"/></svg>
+{%- endmacro %}
+
+{% macro csrf() -%}
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+{%- endmacro %}
+
+{% macro type_icon(kind) -%}
+<span class="type type-{{ kind }}" title="{{ TYPE_LABELS.get(kind, kind) }}">{{ icon(TYPE_ICONS.get(kind, 'file')) }}</span>
+{%- endmacro %}
+
+{% macro status_badge(status) -%}
+{% set labels = {"published": "Published", "draft": "Draft", "archived": "Archived"} %}
+<span class="badge badge-{{ status }}">{{ labels.get(status, status) }}</span>
+{%- endmacro %}
+
+{% macro flag_badge(on, yes="Active", no="Inactive") -%}
+{% if on %}<span class="badge badge-published">{{ yes }}</span>{% else %}<span class="badge badge-off">{{ no }}</span>{% endif %}
+{%- endmacro %}
+
+{# A one-button form. extra: hidden fields. confirm: text for a confirmation prompt. #}
+{% macro post_button(action, label, icon_name=None, cls="btn", confirm=None, extra={}, title=None) -%}
+<form method="post" action="{{ action }}" class="inline"{% if confirm %} data-confirm="{{ confirm }}"{% endif %}>
+  {{ csrf() }}
+  {% for key, value in extra.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+  <button type="submit" class="{{ cls }}"{% if title %} title="{{ title }}" aria-label="{{ title }}"{% endif %}>{% if icon_name %}{{ icon(icon_name) }}{% endif %}{% if label %}<span>{{ label }}</span>{% endif %}</button>
+</form>
+{%- endmacro %}
+
+{% macro field(name, label, value="", type="text", required=False, hint=None, maxlength=None, placeholder=None, autocomplete=None, pattern=None) -%}
+<label class="field">
+  <span class="field-label">{{ label }}{% if required %} <em>*</em>{% endif %}</span>
+  <input type="{{ type }}" name="{{ name }}" value="{{ value if value is not none else '' }}"{% if required %} required{% endif %}{% if maxlength %} maxlength="{{ maxlength }}"{% endif %}{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if autocomplete %} autocomplete="{{ autocomplete }}"{% endif %}{% if pattern %} pattern="{{ pattern }}"{% endif %}>
+  {% if hint %}<span class="hint">{{ hint }}</span>{% endif %}
+</label>
+{%- endmacro %}
+
+{% macro textarea(name, label, value="", rows=3, hint=None, maxlength=5000) -%}
+<label class="field">
+  <span class="field-label">{{ label }}</span>
+  <textarea name="{{ name }}" rows="{{ rows }}" maxlength="{{ maxlength }}">{{ value if value is not none else '' }}</textarea>
+  {% if hint %}<span class="hint">{{ hint }}</span>{% endif %}
+</label>
+{%- endmacro %}
+
+{% macro checkbox(name, label, checked=False, hint=None) -%}
+<label class="check">
+  <input type="checkbox" name="{{ name }}" value="1"{% if checked %} checked{% endif %}>
+  <span>{{ label }}{% if hint %}<span class="hint">{{ hint }}</span>{% endif %}</span>
+</label>
+{%- endmacro %}
+
+{% macro folder_note(share, folder_name=None) -%}
+<p class="folder-note">{{ icon('folder') }}<span>Files: <code>{{ share }}</code>{% if folder_name %} &nbsp;·&nbsp; folder name <code>{{ folder_name }}</code>{% endif %}</span></p>
+{%- endmacro %}
+
+{% macro counts(total, videos, notes, images) -%}
+<span class="counts">
+  {%- if videos %}<span>{{ icon('video') }}{{ videos }}</span>{% endif -%}
+  {%- if notes %}<span>{{ icon('file') }}{{ notes }}</span>{% endif -%}
+  {%- if images %}<span>{{ icon('image') }}{{ images }}</span>{% endif -%}
+  {%- if not total %}<span class="muted">empty</span>{% endif -%}
+</span>
+{%- endmacro %}
+
+{% macro move_buttons(action) -%}
+<span class="move">
+  {{ post_button(action, None, 'up', 'btn-icon', extra={'direction': 'up'}, title='Move up') }}
+  {{ post_button(action, None, 'down', 'btn-icon', extra={'direction': 'down'}, title='Move down') }}
+</span>
+{%- endmacro %}

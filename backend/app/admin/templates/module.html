@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, textarea, checkbox, flag_badge, status_badge, type_icon, post_button, folder_note, move_buttons %}
+{% block title %}{{ module.title }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="kicker">{{ icon('folder') }}Module in {{ school_class.name }} › {{ subject.name }}</p>
+    <h1>{{ module.title }} {{ flag_badge(module.is_published, 'Visible', 'Hidden') }}</h1>
+    {% if module.description %}<p class="muted">{{ module.description }}</p>{% endif %}
+    {{ folder_note(share, module.folder or None) }}
+  </div>
+  <div class="actions"><a class="btn btn-primary" href="#upload">{{ icon('upload') }}<span>Upload files</span></a></div>
+</header>
+
+{% include "_write_warning.html" %}
+
+<section class="card">
+  <h2>{{ icon('layers') }}Content <span class="muted small">({{ items | length }})</span></h2>
+  {% if items %}
+  <table class="table">
+    <thead><tr><th class="narrow">Order</th><th></th><th>Title</th><th>Details</th><th>Status</th><th class="right">Actions</th></tr></thead>
+    <tbody>
+    {% for c in items %}
+      <tr class="{{ 'is-off' if c.status == 'archived' else '' }}">
+        <td class="narrow">{{ move_buttons('/admin/contents/' ~ c.id ~ '/move') }}</td>
+        <td class="narrow">{{ type_icon(c.content_type) }}</td>
+        <td><a href="/admin/contents/{{ c.id }}"><b>{{ c.title }}</b></a>
+          {% if c.id in missing %}<br><span class="warn-text small">{{ icon('alert') }} file missing</span>{% endif %}</td>
+        <td class="muted small">{{ TYPE_LABELS.get(c.content_type, c.content_type) }}
+          {%- if c.duration_seconds %} · {{ c.duration_seconds | duration }}{% endif %}
+          {%- if c.resolution_height %} · {{ c.resolution_width }}×{{ c.resolution_height }}{% endif %}
+          {%- if c.file_size_bytes %} · {{ c.file_size_bytes | size }}{% endif %}</td>
+        <td>{{ status_badge(c.status) }}</td>
+        <td class="right nowrap">
+          {% if c.status != 'published' %}{{ post_button('/admin/contents/' ~ c.id ~ '/status', 'Publish', 'eye', 'btn btn-small', extra={'status': 'published'}) }}
+          {% else %}{{ post_button('/admin/contents/' ~ c.id ~ '/status', 'Unpublish', 'eye-off', 'btn btn-small', extra={'status': 'draft'}) }}{% endif %}
+          <a class="btn-icon" href="/admin/contents/{{ c.id }}" title="Edit, preview, move">{{ icon('edit') }}</a>
+          {{ post_button('/admin/contents/' ~ c.id ~ '/delete', None, 'trash', 'btn-icon danger', confirm='Delete ' ~ c.title ~ '? Students lose their progress on it. The file is kept in .trash for 30 days.', title='Delete') }}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Nothing here yet. Upload videos, PDF notes or images below, or copy them into the folder shown above.</p>
+  {% endif %}
+</section>
+
+<section class="card" id="upload">
+  <h2>{{ icon('upload') }}Upload files</h2>
+  <div class="dropzone" data-upload-url="/admin/upload/{{ module.id }}" data-max-bytes="{{ max_upload }}">
+    {{ icon('upload', 'big') }}
+    <p><b>Drop files here</b> or <label class="btn btn-small">choose files<input type="file" multiple accept="{{ accept_types }}" class="visually-hidden" data-upload-input></label></p>
+    <p class="hint">MP4 videos (H.264 + AAC, fast-start), PDF notes, JPG/PNG/WebP images · up to {{ max_upload | size }} each. The file name becomes the title; you can rename items after uploading.</p>
+    <label class="check"><input type="checkbox" data-upload-publish checked><span>Publish each file when it passes the check</span></label>
+  </div>
+  <ul class="uploads" data-upload-list></ul>
+  <noscript><p class="warn">Uploading needs JavaScript. You can also copy files into the folder shown at the top; they appear within 5 minutes.</p></noscript>
+</section>
+
+<section class="card">
+  <h2>{{ icon('edit') }}Module settings</h2>
+  <form method="post" action="/admin/modules/{{ module.id }}" class="form-grid">
+    {{ csrf() }}
+    {{ field('title', 'Title', module.title, required=True, maxlength=200) }}
+    {{ textarea('description', 'Description', module.description, rows=2) }}
+    {{ checkbox('is_published', 'Visible to students', module.is_published) }}
+    <div class="form-actions"><button class="btn btn-primary" type="submit">{{ icon('check') }}<span>Save</span></button></div>
+  </form>
+  <div class="danger-zone">
+    {{ post_button('/admin/modules/' ~ module.id ~ '/delete', 'Delete module', 'trash', 'btn btn-danger', confirm='Delete the module ' ~ module.title ~ '? Only empty modules can be deleted.') }}
+  </div>
+</section>
+{% endblock %}

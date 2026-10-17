@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, flag_badge %}
+{% block title %}Students{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Students</h1>
+    <p class="muted">A student sees the content of the class they are in, while the class and its batch are active.</p>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/admin/students/import">{{ icon('upload') }}<span>Import from CSV</span></a>
+    <a class="btn btn-primary" href="#new-student">{{ icon('plus') }}<span>New student</span></a>
+  </div>
+</header>
+
+<form class="card filters" method="get" action="/admin/students">
+  <label class="field grow"><span class="field-label">Search</span>
+    <input type="search" name="q" value="{{ q }}" placeholder="Name, username or student ID" maxlength="100"></label>
+  <label class="field"><span class="field-label">Class</span>
+    <select name="class_id">
+      <option value="">All classes</option>
+      <option value="none"{% if class_id == 'none' %} selected{% endif %}>No class</option>
+      {% for cid, label in class_options %}<option value="{{ cid }}"{% if class_id == cid|string %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select></label>
+  <label class="field"><span class="field-label">Status</span>
+    <select name="status">
+      <option value="active"{% if status == 'active' %} selected{% endif %}>Active</option>
+      <option value="inactive"{% if status == 'inactive' %} selected{% endif %}>Inactive</option>
+      <option value="all"{% if status == 'all' %} selected{% endif %}>All</option>
+    </select></label>
+  <button class="btn" type="submit">{{ icon('search') }}<span>Filter</span></button>
+</form>
+
+<section class="card">
+  <h2>{{ icon('users') }}{{ plural(total, 'student') }}</h2>
+  {% if rows %}
+  <table class="table">
+    <thead><tr><th>Name</th><th>Username</th><th>Student ID</th><th>Batch › Class</th><th>Last activity</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for student, class_name, batch_name in rows %}
+      <tr class="{{ '' if student.is_active else 'is-off' }}">
+        <td><a href="/admin/students/{{ student.id }}"><b>{{ student.full_name }}</b></a></td>
+        <td><code>{{ student.username }}</code></td>
+        <td>{{ student.student_code }}</td>
+        <td>{% if class_name %}{{ batch_name }} › {{ class_name }}{% else %}<span class="warn-text">No class</span>{% endif %}</td>
+        <td class="muted small">{{ last_seen.get(student.id) | ago }}</td>
+        <td>{{ flag_badge(student.is_active) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if pages > 1 %}
+  <nav class="pager">
+    {% if page > 1 %}<a class="btn btn-small" href="?q={{ q|urlencode }}&class_id={{ class_id }}&status={{ status }}&page={{ page - 1 }}">Previous</a>{% endif %}
+    <span class="muted">Page {{ page }} of {{ pages }}</span>
+    {% if page < pages %}<a class="btn btn-small" href="?q={{ q|urlencode }}&class_id={{ class_id }}&status={{ status }}&page={{ page + 1 }}">Next</a>{% endif %}
+  </nav>
+  {% endif %}
+  {% else %}
+  <p class="muted">No students match.</p>
+  {% endif %}
+</section>
+
+<section class="card" id="new-student">
+  <h2>{{ icon('plus') }}New student</h2>
+  <form method="post" action="/admin/students" class="form-grid">
+    {{ csrf() }}
+    {{ field('full_name', 'Full name', required=True, maxlength=200) }}
+    {{ field('username', 'Username', required=True, maxlength=100, hint='What the student types to sign in, e.g. anu.k', autocomplete='off') }}
+    {{ field('student_code', 'Student ID', required=True, maxlength=50, hint='Admission number or roll number; also accepted at sign-in.') }}
+    <label class="field"><span class="field-label">Class</span>
+      <select name="class_id"><option value="">No class yet</option>
+        {% for cid, label in class_options %}<option value="{{ cid }}"{% if class_id == cid|string %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select></label>
+    {{ field('password', 'Password', type='password', required=True, hint='At least 8 characters.', autocomplete='new-password') }}
+    {{ field('password_confirm', 'Repeat password', type='password', required=True, autocomplete='new-password') }}
+    <div class="form-actions"><button class="btn btn-primary" type="submit">{{ icon('plus') }}<span>Create student</span></button></div>
+  </form>
+</section>
+{% endblock %}

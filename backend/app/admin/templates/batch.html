@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, textarea, checkbox, flag_badge, post_button, folder_note, counts as count_badges %}
+{% block title %}{{ batch.name }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="kicker">{{ icon('layers') }}Batch</p>
+    <h1>{{ batch.name }} {{ flag_badge(batch.is_active) }}</h1>
+    {% if batch.description %}<p class="muted">{{ batch.description }}</p>{% endif %}
+    {{ folder_note(share, batch.folder) }}
+  </div>
+  <div class="actions"><a class="btn btn-primary" href="#new-class">{{ icon('plus') }}<span>New class</span></a></div>
+</header>
+
+<section class="card">
+  <h2>{{ icon('cap') }}Classes</h2>
+  {% if classes %}
+  <table class="table">
+    <thead><tr><th>Class</th><th>Subjects</th><th>Students</th><th>Content</th><th>Folder</th><th></th></tr></thead>
+    <tbody>
+    {% for c in classes %}
+      {% set n = counts.get(c.id, (0, 0, 0, 0)) %}
+      <tr class="{{ '' if c.is_active else 'is-off' }}">
+        <td><a href="/admin/classes/{{ c.id }}"><b>{{ c.name }}</b></a>{% if not c.is_active %} {{ flag_badge(False) }}{% endif %}</td>
+        <td>{{ subjects.get(c.id, 0) }}</td>
+        <td><a href="/admin/students?class_id={{ c.id }}">{{ students.get(c.id, 0) }}</a></td>
+        <td>{{ count_badges(*n) }}</td>
+        <td><code>{{ c.folder }}</code></td>
+        <td class="right"><a class="btn-icon" href="/admin/classes/{{ c.id }}" title="Open">{{ icon('right') }}</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No classes in this batch yet.</p>
+  {% endif %}
+</section>
+
+<div class="grid-2">
+  <section class="card" id="new-class">
+    <h2>{{ icon('plus') }}New class</h2>
+    <form method="post" action="/admin/batches/{{ batch.id }}/classes">
+      {{ csrf() }}
+      {{ field('name', 'Name', required=True, maxlength=100, placeholder='Class 12') }}
+      {{ field('folder', 'Folder name', maxlength=100, hint='Optional; made from the name (e.g. class-12).', pattern='[A-Za-z0-9][A-Za-z0-9._-]*') }}
+      {{ textarea('description', 'Description', rows=2) }}
+      <button class="btn btn-primary" type="submit">{{ icon('plus') }}<span>Create class</span></button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>{{ icon('edit') }}Batch settings</h2>
+    <form method="post" action="/admin/batches/{{ batch.id }}">
+      {{ csrf() }}
+      {{ field('name', 'Name', batch.name, required=True, maxlength=120) }}
+      {{ textarea('description', 'Description', batch.description, rows=2) }}
+      {{ field('sort_order', 'Order', batch.sort_order, type='number', hint='Lower numbers are listed first.') }}
+      {{ checkbox('is_active', 'Active', batch.is_active, hint='Students of an inactive batch see no content.') }}
+      <button class="btn btn-primary" type="submit">{{ icon('check') }}<span>Save</span></button>
+    </form>
+    <div class="danger-zone">
+      {{ post_button('/admin/batches/' ~ batch.id ~ '/delete', 'Delete batch', 'trash', 'btn btn-danger', confirm='Delete the batch ' ~ batch.name ~ '? Only empty batches can be deleted.') }}
+    </div>
+  </section>
+</div>
+{% endblock %}

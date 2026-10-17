@@ -5,10 +5,10 @@ import pytest
 from sqlalchemy import func, select
 
 from app import cli
-from app.models import Chapter, SchoolClass, Student, Subject, Video
+from app.models import Batch, Content, Module, SchoolClass, StaffUser, Student, Subject
 from app.security import verify_password
 
-from .conftest import write_video
+from .conftest import BATCH, write_pdf, write_video
 
 
 def args(**kwargs) -> argparse.Namespace:
@@ -17,23 +17,35 @@ def args(**kwargs) -> argparse.Namespace:
 
 @pytest.fixture
 def manifest(tmp_path):
-    write_video("seedtest/cs/one.mp4")
-    write_video("seedtest/cs/slow-start.mp4", faststart=False)
+    base = "seedbatch/seedclass/cs/01-intro"
+    write_video(f"{base}/one.mp4")
+    write_video(f"{base}/slow-start.mp4", faststart=False)
+    write_pdf(f"{base}/notes.pdf")
     data = {
-        "classes": [
+        "batches": [
             {
-                "name": "Seed Class",
-                "subjects": [
+                "name": "Seed Batch",
+                "folder": "seedbatch",
+                "classes": [
                     {
-                        "name": "CS",
-                        "chapters": [
+                        "name": "Seed Class",
+                        "folder": "seedclass",
+                        "subjects": [
                             {
-                                "title": "Intro",
-                                "published": True,
-                                "videos": [
-                                    {"title": "One", "storage_key": "seedtest/cs/one.mp4", "status": "published"},
-                                    {"title": "Slow", "storage_key": "seedtest/cs/slow-start.mp4", "status": "published"},
-                                    {"title": "Gone", "storage_key": "seedtest/cs/not-there.mp4", "status": "published"},
+                                "name": "CS",
+                                "folder": "cs",
+                                "modules": [
+                                    {
+                                        "title": "Intro",
+                                        "folder": "01-intro",
+                                        "published": True,
+                                        "contents": [
+                                            {"title": "One", "file": "one.mp4", "status": "published"},
+                                            {"title": "Slow", "file": "slow-start.mp4", "status": "published"},
+                                            {"title": "Notes", "file": "notes.pdf", "status": "published"},
+                                            {"title": "Gone", "file": "not-there.mp4", "status": "published"},
+                                        ],
+                                    }
                                 ],
                             }
                         ],
@@ -42,8 +54,10 @@ def manifest(tmp_path):
             }
         ],
         "students": [
-            {"student_code": "seed-1", "username": "Seed.Student", "full_name": "Seed Student", "class": "Seed Class"},
-            {"student_code": "seed-2", "username": "seed.off", "full_name": "Off", "class": "Seed Class", "active": False},
+            {"student_code": "seed-1", "username": "Seed.Student", "full_name": "Seed Student",
+             "class": "Seed Batch/Seed Class"},
+            {"student_code": "seed-2", "username": "seed.off", "full_name": "Off", "class": "Seed Batch/Seed Class",
+             "active": False},
         ],
     }
     path = tmp_path / "manifest.json"
@@ -57,79 +71,122 @@ def test_seed_demo_is_idempotent(db, manifest, monkeypatch):
         cli.cmd_seed_demo(db, args(manifest=str(manifest), password_env="SEED_PW", password_stdin=False))
         db.flush()
 
+    assert db.scalar(select(func.count()).select_from(Batch)) == 1
     assert db.scalar(select(func.count()).select_from(SchoolClass)) == 1
-    assert db.scalar(select(func.count()).select_from(Chapter)) == 1
-    videos = {v.storage_key: v for v in db.scalars(select(Video))}
-    assert set(videos) == {"seedtest/cs/one.mp4", "seedtest/cs/slow-start.mp4"}
-    assert videos["seedtest/cs/one.mp4"].status == "published"
-    assert videos["seedtest/cs/one.mp4"].duration_seconds == 600
-    assert videos["seedtest/cs/one.mp4"].resolution_height == 720
+    assert db.scalar(select(func.count()).select_from(Module)) == 1
+    items = {c.storage_key.rsplit("/", 1)[1]: c for c in db.scalars(select(Content))}
+    assert set(items) == {"one.mp4", "slow-start.mp4", "notes.pdf"}
+    assert items["one.mp4"].status == "published"
+    assert items["one.mp4"].duration_seconds == 600 and items["one.mp4"].resolution_height == 720
+    assert items["one.mp4"].storage_key == "seedbatch/seedclass/cs/01-intro/one.mp4"
+    assert (items["notes.pdf"].content_type, items["notes.pdf"].mime_type) == ("pdf", "application/pdf")
+    assert items["notes.pdf"].checksum and items["notes.pdf"].status == "published"
     # Files with problems are never auto-published.
-    assert videos["seedtest/cs/slow-start.mp4"].status == "draft"
+    assert items["slow-start.mp4"].status == "draft"
 
     student = db.scalar(select(Student).where(Student.username == "seed.student"))
     assert student.student_code == "SEED-1"
     assert verify_password(student.password_hash, "seed-password-1")
+    assert db.get(SchoolClass, student.class_id).name == "Seed Class"
     assert db.scalar(select(Student.is_active).where(Student.username == "seed.off")) is False
 
 
-def test_add_video_registers_a_draft(db, catalog):
-    write_video("class12/cs/new.mp4", duration_seconds=95)
-    cli.cmd_add_video(
-        db,
-        args(chapter="Class 12/Computer Science/Basics", storage_key="class12/cs/new.mp4",
-             title="New", description=None, sort=5),
+def test_structure_commands_create_folders_names(db, catalog):
+    cli.cmd_create_batch(db, args(name="NEET 2027", folder=None, description=None))
+    batch = db.scalar(select(Batch).where(Batch.name == "NEET 2027"))
+    assert batch.folder == "neet-2027"
+    cli.cmd_create_class(db, args(batch="NEET 2027", name="Class 12 – Bio", folder=None, description=None))
+    school_class = db.scalar(select(SchoolClass).where(SchoolClass.batch_id == batch.id))
+    assert school_class.folder == "class-12-bio"
+    cli.cmd_create_subject(db, args(class_ref="NEET 2027/Class 12 – Bio", name="Biology", folder="bio", sort=1))
+    cli.cmd_create_module(
+        db, args(subject="NEET 2027/Class 12 – Bio/Biology", title="Cells", folder=None, description=None, sort=2,
+                 publish=True),
     )
-    video = db.scalar(select(Video).where(Video.storage_key == "class12/cs/new.mp4"))
-    assert video.status == "draft"
-    assert video.duration_seconds == 95
-
-
-@pytest.mark.parametrize("key", ["../etc/x.mp4", "class12/cs/does-not-exist.mp4"])
-def test_add_video_rejects_bad_keys_and_missing_files(db, catalog, key):
+    module = db.scalar(select(Module).where(Module.title == "Cells"))
+    assert module.folder == "02-cells" and module.is_published
     with pytest.raises(cli.CliError):
-        cli.cmd_add_video(
-            db, args(chapter=str(catalog.basics.id), storage_key=key, title="x", description=None, sort=0)
+        cli.cmd_create_batch(db, args(name="Bad", folder="../up", description=None))
+
+
+def test_find_class_needs_the_batch_when_names_repeat(db, catalog):
+    # "Class 12" exists in this year's batch and in last year's.
+    with pytest.raises(cli.CliError, match="Batch 2026-27/Class 12"):
+        cli.find_class(db, "Class 12")
+    assert cli.find_class(db, "Batch 2026-27/Class 12").id == catalog.class12.id
+    assert cli.find_class(db, f"{BATCH}/class12").id == catalog.class12.id  # folders work too
+    assert cli.find_class(db, "Class 11").id == catalog.class11.id  # unique name
+    assert cli.find_module(db, "Batch 2026-27/Class 12/Computer Science/Basics").id == catalog.basics.id
+    with pytest.raises(cli.CliError):
+        cli.find_module(db, "Batch 2026-27/Class 12/Nope/Basics")
+
+
+def test_add_content_registers_drafts_of_any_type(db, catalog):
+    key = f"{BATCH}/class12/cs/01-basics/new.mp4"
+    write_video(key, duration_seconds=95)
+    cli.cmd_add_content(
+        db,
+        args(module="Batch 2026-27/Class 12/Computer Science/Basics", storage_key=key, title="New",
+             description=None, sort=5),
+    )
+    video = db.scalar(select(Content).where(Content.storage_key == key))
+    assert (video.status, video.duration_seconds, video.content_type) == ("draft", 95, "video")
+
+    pdf_key = f"{BATCH}/class12/cs/01-basics/extra.pdf"
+    write_pdf(pdf_key)
+    cli.cmd_add_content(
+        db, args(module=str(catalog.basics.id), storage_key=pdf_key, title="Extra", description=None, sort=6)
+    )
+    assert db.scalar(select(Content.content_type).where(Content.storage_key == pdf_key)) == "pdf"
+
+
+@pytest.mark.parametrize("key", ["../etc/x.mp4", f"{BATCH}/class12/cs/does-not-exist.mp4", f"{BATCH}/x/notes.txt"])
+def test_add_content_rejects_bad_keys_and_missing_files(db, catalog, key):
+    with pytest.raises(cli.CliError):
+        cli.cmd_add_content(
+            db, args(module=str(catalog.basics.id), storage_key=key, title="x", description=None, sort=0)
         )
 
 
-def test_add_video_rejects_duplicates(db, catalog):
+def test_add_content_rejects_duplicates(db, catalog):
     with pytest.raises(cli.CliError):
-        cli.cmd_add_video(
+        cli.cmd_add_content(
             db,
-            args(chapter=str(catalog.basics.id), storage_key="class12/cs/lesson-01.mp4", title="dup",
+            args(module=str(catalog.basics.id), storage_key=catalog.lesson1.storage_key, title="dup",
                  description=None, sort=0),
         )
 
 
 def test_publish_refuses_files_with_problems_unless_forced(db, catalog):
-    write_video("class12/cs/draft.mp4", faststart=False)
+    write_video(catalog.draft.storage_key, faststart=False)
     with pytest.raises(cli.CliError):
-        cli.cmd_set_video_status(db, args(video=str(catalog.draft.id), command="publish-video", force=False))
-    cli.cmd_set_video_status(db, args(video=str(catalog.draft.id), command="publish-video", force=True))
+        cli.cmd_set_content_status(db, args(content=str(catalog.draft.id), status_value="published", force=False))
+    cli.cmd_set_content_status(db, args(content=str(catalog.draft.id), status_value="published", force=True))
     assert catalog.draft.status == "published"
-    write_video("class12/cs/draft.mp4")  # restore for other tests
+    write_video(catalog.draft.storage_key)  # restore for other tests
 
 
 def test_deactivate_student_revokes_sessions(client, db, catalog):
     from .conftest import login
 
     headers = login(client, "demo.student")
-    cli.cmd_set_student_active(db, args(student="demo.student", command="deactivate-student"))
+    cli.cmd_set_student_active(db, args(student="demo.student", active_value=False))
     db.commit()
     assert client.get("/api/v1/me", headers=headers).status_code == 401
 
 
 def test_check_media_reports_missing_files(db, catalog, capsys):
     assert cli.cmd_check_media(db, args(update=False)) == 1
-    assert "class12/cs/missing.mp4" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "02-advanced/missing.mp4" in out and "notes.pdf" in out
 
 
 def test_load_students_create_is_rerunnable_and_delete_is_scoped(db, catalog, monkeypatch, client):
     from .conftest import login
 
     monkeypatch.setenv("LOAD_PW", "load-test-pass")
-    args_create = args(count=3, prefix="load", class_ref="Class 12", password_env="LOAD_PW", password_stdin=False)
+    args_create = args(count=3, prefix="load", class_ref="Batch 2026-27/Class 12", password_env="LOAD_PW",
+                       password_stdin=False)
     cli.cmd_create_load_students(db, args_create)
     cli.cmd_create_load_students(db, args_create)  # second run adds nothing
     db.commit()
@@ -147,172 +204,52 @@ def test_load_students_create_is_rerunnable_and_delete_is_scoped(db, catalog, mo
     assert remaining == ["loadstone"]
 
 
-def test_display_name_rules():
-    assert cli._display_name("02-python-functions") == (2, "Python Functions")
-    assert cli._display_name("class12") == (None, "Class 12")
-    assert cli._display_name("computer-science") == (None, "Computer Science")
-    assert cli._display_name("01_Intro.to_Algebra") == (1, "Intro.to Algebra")
-    assert cli._display_name("lesson-01") == (None, "Lesson 01")
-
-
-def test_sync_videos_builds_the_catalogue_from_folders(db, catalog, capsys):
-    from .conftest import VIDEO_ROOT
-
-    # New lessons dropped on the share; one in a chapter folder, one directly under the subject.
-    write_video("class10/general-science/01-matter/02-states-of-matter.mp4", duration_seconds=300)
-    write_video("class10/general-science/01-matter/01-what-is-matter.mp4", duration_seconds=240)
-    write_video("class10/general-science/quick-revision.mp4", duration_seconds=60)
-    write_video("class10/general-science/01-matter/03-not-faststart.mp4", faststart=False)
-    (VIDEO_ROOT / "class10" / "title.txt").write_text("Class 10 (Science stream)\n", encoding="utf-8")
-    (VIDEO_ROOT / "class10" / "general-science" / "01-matter" / "02-states-of-matter.txt").write_text(
-        "States of Matter: solids, liquids, gases\nWith demonstrations.\nSecond paragraph.\n", encoding="utf-8"
+def test_staff_accounts(db, monkeypatch, capsys):
+    monkeypatch.setenv("STAFF_PW", "staff-password-1")
+    cli.cmd_create_staff(
+        db, args(username="Principal", name="The Principal", role="admin", password_env="STAFF_PW", password_stdin=False)
     )
-    # Things that must be ignored or skipped.
-    write_video("loose-file.mp4")
-    write_video("class10/general-science/01-matter/too/deep.mp4")
-
-    assert cli.cmd_sync_videos(db, args(publish=True, archive_missing=False)) == 1  # one file with problems
-    db.commit()
-
-    school_class = db.scalar(select(SchoolClass).where(SchoolClass.name == "Class 10 (Science stream)"))
-    assert school_class is not None
-    subject = db.scalar(select(Subject).where(Subject.class_id == school_class.id))
-    assert subject.name == "General Science"
-    chapters = {c.title: c for c in db.scalars(select(Chapter).where(Chapter.subject_id == subject.id))}
-    assert set(chapters) == {"Matter", "Lessons"}
-    assert chapters["Matter"].sort_order == 1 and chapters["Matter"].is_published
-    videos = {v.storage_key: v for v in db.scalars(select(Video).where(Video.storage_key.like("class10/%")))}
-    assert len(videos) == 4
-    states = videos["class10/general-science/01-matter/02-states-of-matter.mp4"]
-    assert states.title == "States of Matter: solids, liquids, gases"
-    assert states.description == "With demonstrations.\nSecond paragraph."
-    assert states.sort_order == 2 and states.status == "published" and states.duration_seconds == 300
-    assert videos["class10/general-science/01-matter/01-what-is-matter.mp4"].title == "What Is Matter"
-    assert videos["class10/general-science/quick-revision.mp4"].chapter_id == chapters["Lessons"].id
-    assert videos["class10/general-science/01-matter/03-not-faststart.mp4"].status == "draft"  # problems: never auto-published
-    out = capsys.readouterr().out
-    assert "skip  loose-file.mp4" in out and "skip  class10/general-science/01-matter/too/deep.mp4" in out
-    # The demo videos registered by the fixture are left exactly as they were.
-    assert catalog.draft.status == "draft" and catalog.lesson1.status == "published"
-
-    # Re-running changes nothing.
-    assert cli.cmd_sync_videos(db, args(publish=True, archive_missing=False)) == 0
-    db.commit()
-    assert db.scalar(select(func.count()).select_from(Video).where(Video.storage_key.like("class10/%"))) == 4
-    assert db.scalar(select(func.count()).select_from(Chapter).where(Chapter.subject_id == subject.id)) == 2
-
-    # A file removed from the share is archived only when asked.
-    (VIDEO_ROOT / "class10" / "general-science" / "quick-revision.mp4").unlink()
-    cli.cmd_sync_videos(db, args(publish=True, archive_missing=False))
-    db.commit()
-    assert videos["class10/general-science/quick-revision.mp4"].status == "published"
-    cli.cmd_sync_videos(db, args(publish=True, archive_missing=True))
-    db.commit()
-    assert db.get(Video, videos["class10/general-science/quick-revision.mp4"].id).status == "archived"
+    staff = db.scalar(select(StaffUser).where(StaffUser.username == "principal"))
+    assert staff.is_admin and verify_password(staff.password_hash, "staff-password-1")
+    with pytest.raises(cli.CliError, match="already exists"):
+        cli.cmd_create_staff(
+            db, args(username="principal", name="x", role="staff", password_env="STAFF_PW", password_stdin=False)
+        )
+    monkeypatch.setenv("SHORT_PW", "short")
+    with pytest.raises(cli.CliError, match="at least 8"):
+        cli.cmd_create_staff(
+            db, args(username="teacher", name="T", role="staff", password_env="SHORT_PW", password_stdin=False)
+        )
+    cli.cmd_set_staff_active(db, args(staff="principal", active_value=False))
+    assert staff.is_active is False
 
 
-def _private_root(monkeypatch, tmp_path):
-    """Point the CLI at an empty video folder of its own (VIDEO_ROOT is shared by all tests)."""
+def test_relocate_moves_pre_batch_folders(db, tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     monkeypatch.setattr(cli, "get_settings", lambda: SimpleNamespace(video_root=tmp_path))
+    batch = Batch(name="Batch 2026-27", folder=BATCH)
+    db.add(batch)
+    db.flush()
+    school_class = SchoolClass(batch_id=batch.id, name="Class 12", folder="class12")
+    db.add(school_class)
+    db.flush()
+    subject = Subject(class_id=school_class.id, name="CS", folder="cs")
+    db.add(subject)
+    db.flush()
+    module = Module(subject_id=subject.id, title="Basics", folder="01-basics", is_published=True)
+    db.add(module)
+    db.flush()
+    db.add(Content(module_id=module.id, title="One", storage_key=f"{BATCH}/class12/cs/01-basics/one.mp4"))
+    db.flush()
+    # The files are still where the old layout kept them.
+    write_video("class12/cs/01-basics/one.mp4", root=tmp_path)
+    (tmp_path / "class12" / "cs" / "01-basics" / "one.txt").write_text("One\n")
 
-    def write(key: str, **kwargs):
-        from .mp4_builder import build_mp4
-
-        path = tmp_path.joinpath(*key.split("/"))
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(build_mp4(**kwargs))
-        return path
-
-    return tmp_path, write
-
-
-def test_sync_videos_follows_moved_renamed_and_replaced_files(db, catalog, tmp_path, monkeypatch, capsys):
-    from app.models import StudentVideoProgress
-
-    root, write = _private_root(monkeypatch, tmp_path)
-    write("class9/maths/01-algebra/01-linear-equations.mp4", duration_seconds=300, mdat_bytes=5000)
-    write("class9/maths/01-algebra/02-quadratics.mp4", duration_seconds=240, mdat_bytes=7000)
-    algebra = root / "class9" / "maths" / "01-algebra"
-    (algebra / "02-quadratics.txt").write_text("Quadratic Equations: an introduction\n", encoding="utf-8")
-    assert cli.cmd_sync_videos(db, args(publish=True, archive_missing=False)) == 0
-    db.commit()
-    linear = db.scalar(select(Video).where(Video.storage_key == "class9/maths/01-algebra/01-linear-equations.mp4"))
-    quadratics = db.scalar(select(Video).where(Video.storage_key == "class9/maths/01-algebra/02-quadratics.mp4"))
-    assert linear.title == "Linear Equations" and quadratics.title == "Quadratic Equations: an introduction"
-    algebra_chapter_id = linear.chapter_id
-    db.add(StudentVideoProgress(student_id=catalog.student.id, video_id=linear.id,
-                                position_seconds=120, duration_seconds=300))
-    db.commit()
-
-    # The teacher renames the chapter folder and one file, and moves the other lesson to a new chapter.
-    basics = algebra.parent / "02-algebra-basics"
-    algebra.rename(basics)
-    (basics / "01-linear-equations.mp4").rename(basics / "01-linear-equations-in-one-variable.mp4")
-    polynomials = algebra.parent / "03-polynomials"
-    polynomials.mkdir()
-    (basics / "02-quadratics.mp4").rename(polynomials / "01-quadratics.mp4")
-    (basics / "02-quadratics.txt").unlink()
-    assert cli.cmd_sync_videos(db, args(publish=True, archive_missing=True)) == 0
-    db.commit()
-
-    assert db.scalar(select(func.count()).select_from(Video).where(Video.storage_key.like("class9/%"))) == 2
-    linear = db.get(Video, linear.id)
-    assert linear.storage_key == "class9/maths/02-algebra-basics/01-linear-equations-in-one-variable.mp4"
-    assert linear.title == "Linear Equations In One Variable"  # an automatic name follows the file name
-    assert linear.status == "published" and linear.sort_order == 1
-    assert db.get(Chapter, linear.chapter_id).title == "Algebra Basics"
-    assert db.get(Chapter, linear.chapter_id).sort_order == 2
-    quadratics = db.get(Video, quadratics.id)
-    assert quadratics.storage_key == "class9/maths/03-polynomials/01-quadratics.mp4"
-    assert quadratics.title == "Quadratic Equations: an introduction"  # a custom title is kept
-    assert quadratics.sort_order == 1
-    assert db.get(Chapter, quadratics.chapter_id).title == "Polynomials"
-    progress = db.scalar(select(StudentVideoProgress).where(StudentVideoProgress.video_id == linear.id))
-    assert progress.position_seconds == 120  # progress travelled with the file
-    assert db.get(Chapter, algebra_chapter_id) is None  # emptied by the moves, so removed
-    out = capsys.readouterr().out
-    assert "~ moved class9/maths/01-algebra/01-linear-equations.mp4 ->" in out
-    assert "- removed empty chapter Maths/Algebra" in out
-    assert "2 moved" in out and "0 archived" in out and "1 empty chapter(s) removed" in out
-
-    # A file replaced in place (re-encoded, or a copy that has finished) gets fresh metadata.
-    write("class9/maths/03-polynomials/01-quadratics.mp4", duration_seconds=900, mdat_bytes=9000)
-    assert cli.cmd_sync_videos(db, args(publish=True, archive_missing=True)) == 0
-    db.commit()
-    assert db.get(Video, quadratics.id).duration_seconds == 900
-    assert db.get(Video, quadratics.id).file_size_bytes == (root / "class9/maths/03-polynomials/01-quadratics.mp4").stat().st_size
-    assert "~ updated class9/maths/03-polynomials/01-quadratics.mp4" in capsys.readouterr().out
-
-
-def test_sync_videos_does_not_guess_between_identical_files(db, catalog, tmp_path, monkeypatch):
-    root, write = _private_root(monkeypatch, tmp_path)
-    write("class9/maths/01-algebra/01-a.mp4", duration_seconds=300, mdat_bytes=5000)
-    cli.cmd_sync_videos(db, args(publish=True, archive_missing=False))
-    db.commit()
-    original = db.scalar(select(Video).where(Video.storage_key == "class9/maths/01-algebra/01-a.mp4"))
-
-    # Two identical copies appear while the original disappears: nothing tells them apart.
-    (root / "class9" / "maths" / "01-algebra" / "01-a.mp4").unlink()
-    write("class9/maths/01-algebra/01-b.mp4", duration_seconds=300, mdat_bytes=5000)
-    write("class9/maths/01-algebra/01-c.mp4", duration_seconds=300, mdat_bytes=5000)
-    cli.cmd_sync_videos(db, args(publish=True, archive_missing=True))
-    db.commit()
-    assert db.get(Video, original.id).status == "archived"
-    assert db.get(Video, original.id).storage_key == "class9/maths/01-algebra/01-a.mp4"
-    assert db.scalar(select(func.count()).select_from(Video).where(Video.storage_key.like("class9/%"))) == 3
-
-
-def test_sync_videos_never_archives_when_the_folder_is_empty(db, catalog, tmp_path, monkeypatch, capsys):
-    _private_root(monkeypatch, tmp_path)  # an empty folder, as after a storage disk failed to mount
-    assert cli.cmd_sync_videos(db, args(publish=True, archive_missing=True)) == 0
-    db.commit()
-    assert db.get(Video, catalog.lesson1.id).status == "published"
-    assert "nothing archived" in capsys.readouterr().out
-
-
-def test_lookup_by_path(db, catalog):
-    assert cli.find_chapter(db, "Class 12/Computer Science/Basics").id == catalog.basics.id
-    with pytest.raises(cli.CliError):
-        cli.find_chapter(db, "Class 12/Nope/Basics")
+    cli.cmd_relocate_content(db, args(apply=False, quiet=False))
+    assert (tmp_path / "class12").exists()
+    cli.cmd_relocate_content(db, args(apply=True, quiet=False))
+    assert (tmp_path / BATCH / "class12" / "cs" / "01-basics" / "one.mp4").is_file()
+    assert (tmp_path / BATCH / "class12" / "cs" / "01-basics" / "one.txt").is_file()
+    assert not (tmp_path / "class12").exists()
+    assert cli.relocate_legacy_layout(db, tmp_path, apply=True) == []  # idempotent

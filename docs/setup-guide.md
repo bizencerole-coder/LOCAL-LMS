@@ -92,13 +92,18 @@ nano .env
 |---|---|
 | `POSTGRES_PASSWORD` | Database password (letters, digits, `-`, `_` only) |
 | `MEDIA_SIGNING_SECRET` | Shared by API and Nginx to sign/verify playback URLs (≥32 chars, same charset) |
-| `VIDEO_ROOT` | **Host** path of the MP4 library; mounted read-only at `/srv/campus-lms/videos` |
+| `VIDEO_ROOT` | **Host** path of the content library (videos, PDF notes, images in `<batch>/<class>/<subject>/<module>/`); mounted at `/srv/campus-lms/videos`, read-only for Nginx, writable for the API (dashboard uploads) |
+| `LMS_CONTENT_UID` / `LMS_CONTENT_GID` | The API runs as this user/group: the owner of `VIDEO_ROOT` (`stat -c '%u %g' "$VIDEO_ROOT"`), so dashboard and network-share files can be edited by both. `install.sh` sets them |
 | `MEDIA_BASE_URL` | Fixed base for playback URLs (`http://lms.campus.lan`), recommended on a LAN; empty = the address each tablet typed |
 | `PLAYBACK_URL_TTL_SECONDS` | Signed URL lifetime (default 7200). When a URL expires mid-lesson the app fetches a new one and continues |
 | `SESSION_TTL_SECONDS` | Sign-in lifetime (default 28800 = 8 h) |
 | `COMPLETION_THRESHOLD` | A lesson is complete once the playback position reaches this fraction of its length (default 0.9; seeking counts; 0 = only when the video plays to the end) |
 | `LMS_HTTP_BIND` / `LMS_HTTP_PORT` | Where Nginx listens. Binding to the LAN IP keeps other interfaces closed, but does not filter by source |
 | `LOG_FORMAT` | `text` or `json` for API logs |
+| `STAFF_SESSION_TTL_SECONDS` | Dashboard sign-in lifetime (default 43200 = 12 h) |
+| `UPLOAD_MAX_BYTES` | Largest file staff may upload (default 8 GiB; Nginx allows up to 8 GiB) |
+| `CONTENT_SHARE_PATH` | How staff PCs reach `VIDEO_ROOT`, shown on dashboard pages, e.g. `'\\192.168.10.10\campus-lms\videos'` |
+| `DISPLAY_TIMEZONE` | Time zone for times on the dashboard (default `Asia/Kolkata`) |
 | `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_ADMISSION_LIMIT` | Capacity per API worker (see `.env.example`); leave the defaults for the prototype |
 
 **Restrict who can reach the server.** Two layers:
@@ -141,12 +146,15 @@ Docker service is enabled (`sudo systemctl enable docker`).
 ## 6. Demo content and users
 
 ```bash
-scripts/make_test_videos.sh /srv/campus-lms/videos            # 5 files, incl. a 32-min lesson (~9 min to encode)
+scripts/make_test_videos.sh /srv/campus-lms/videos            # 5 videos (incl. a 32-min lesson, ~9 min to encode), PDF notes, an image
 scripts/make_test_videos.sh /srv/campus-lms/videos --short    # quicker: long lesson cut to 5 min
 scripts/seed_demo_data.sh                                     # prompts for the demo password
 ```
 
-The seed (from `backend/seed/demo_catalog.json`) creates:
+The seed (from `backend/seed/demo_catalog.json`) creates the batch *Batch 2026-27* with
+Class 12 (Computer Science › Python Basics: three videos, one a draft, and PDF notes;
+Mathematics › Calculus: the long video) and Class 11 (Physics › Motion: a video and an image),
+and these students:
 
 | Username | Class | Purpose |
 |---|---|---|
@@ -158,102 +166,145 @@ All demo accounts share the password you type; it is never stored in the reposit
 Re-running the seed is safe: existing records are left alone. To script it, pipe the
 password: `printf '%s\n' "$PW" | scripts/seed_demo_data.sh --password-stdin`.
 
-The demo files use the same folder layout as §7 (`class12/computer-science/01-python-basics/01-variables-and-types.mp4`
+The demo files use the folder layout of §7 (`batch-2026-27/class12/computer-science/01-python-basics/01-variables-and-types.mp4`
 and so on), so what you see in the file share is what the app shows. The seed gives them
-their titles; a plain `sync-videos` on the same files would name them from the file names.
+their titles; a plain folder sync on the same files would name them from the file names.
+Staff accounts are not part of the seed: create one with `scripts/lms-admin.sh create-staff` (§7.1).
 
-## 7. Adding lessons: the folder layout and `sync-videos`
+## 7. Managing content: the staff dashboard and the folders
 
-The catalogue the app shows (class → subject → chapter → lesson) can be built straight
-from the folders under `VIDEO_ROOT`. Teachers copy files; the server registers them.
+Everything the tablets show is organised as **Batch › Class › Subject › Module › Content**:
 
-### 7.1 Folder layout
+| Level | Example | Notes |
+|---|---|---|
+| Batch | Batch 2026-27, NEET 2027 | A group of students for a period. Inactive batches are hidden from their students. |
+| Class | Class 12 | Students are assigned to one class. |
+| Subject | Computer Science | |
+| Module | Python Basics | A unit of a subject (chapter, topic, week…). Hidden modules are not shown. |
+| Content | a video, PDF notes, an image | MP4 (H.264 + AAC, fast-start), PDF, JPG/PNG/WebP. Each item is a draft until published. |
+
+Each level is also a folder under `VIDEO_ROOT`, so the network share mirrors the app:
 
 ```text
 VIDEO_ROOT/
-  class12/                         → class "Class 12"
-    computer-science/              → subject "Computer Science"
-      01-python-basics/            → chapter "Python Basics", order 1
-        01-variables-and-types.mp4 → lesson "Variables And Types", order 1
-        02-python-functions.mp4    → lesson "Python Functions", order 2
-        02-python-functions.txt    → optional: first line = title, rest = description
-      title.txt                    → optional: overrides the subject's display name
-    mathematics/
-      quick-revision.mp4           → no chapter folder: goes into a chapter called "Lessons"
+  batch-2026-27/                      → batch "Batch 2026-27"   (title.txt holds the display name)
+    class12/                          → class "Class 12"
+      computer-science/               → subject "Computer Science"
+        01-python-basics/             → module "Python Basics", order 1
+          01-variables-and-types.mp4  → video, order 1
+          01-variables-and-types.txt  → optional: first line = title, rest = description
+          05-python-basics-notes.pdf  → notes (PDF)
+        quick-revision.mp4            → no module folder: shown in a module called "General"
+  .uploads/  .trash/                  → used by the dashboard (uploads in progress; deleted files, kept 30 days)
 ```
 
-Rules:
-- Names may contain letters, digits, `.`, `-` and `_` only — **no spaces** and nothing else.
-  Use `title.txt` (in a class, subject or chapter folder) or `<lesson>.txt` (next to a file)
-  for the names students should see, e.g. `Class 12 – Science` or `Lesson 2: Functions`.
-- A leading number and dash (`01-`, `02-`) sets the order and is removed from the name.
-  `-` and `_` become spaces, words are capitalised, and `class12` becomes `Class 12`.
-- Exactly three or four levels: `class/subject/lesson.mp4` or `class/subject/chapter/lesson.mp4`.
-- Files must be H.264 + AAC MP4 with fast-start (PRD §12). Check before copying with
-  `python3 scripts/inspect_media.py lesson.mp4`; a file with problems is registered but
-  stays a draft until fixed.
-- Student access follows the class name: `scripts/lms-admin.sh assign-class <username> "Class 12"`.
+There are two ways to manage it, and they can be mixed freely: the folder sync keeps the
+database and the folders in step.
 
-### 7.2 Copying files to the server
+### 7.1 The staff dashboard (recommended)
 
-From Windows: open `\\172.18.1.169\campus-lms` (OMV SMB share; sign in as `lmsadmin`) and
-copy into `videos\class12\computer-science\...`. From Linux/macOS: `scp` or an SMB mount.
-The share is for the content administrator only — keep it off the student Wi-Fi (PRD §11.2).
-
-### 7.3 Registering them
+Open `http://<server>/admin/` in a browser on a staff PC (typing just `http://<server>/`
+also gets there). Create the first administrator on the server, once:
 
 ```bash
-scripts/lms-admin.sh sync-videos             # registers new files as drafts; existing ones are untouched
-scripts/lms-admin.sh tree                    # review names, order and status
-scripts/lms-admin.sh publish-video class12/computer-science/01-python-basics/02-python-functions.mp4
-scripts/lms-admin.sh sync-videos --publish   # or: publish every new file that passes the check
-scripts/lms-admin.sh sync-videos --archive-missing   # also hide lessons whose files were removed
+scripts/lms-admin.sh create-staff --username admin --name "Administrator" --role admin   # asks for a password
 ```
 
-To make the app follow the folders on its own, run the sync every few minutes from
-cron (or *System → Scheduled Tasks* in OMV, as `lmsadmin`):
+Administrators create the other staff accounts under **Staff**. *Staff* accounts manage
+content and students; *administrator* accounts can also manage staff accounts and delete
+students. The dashboard has:
+
+- **Content**: batches → classes → subjects → modules, each created with a name; the folder
+  name is made from it (or typed in) and fixed from then on. Renaming changes only the
+  display name (and the folder's `title.txt`). Subjects, modules and items can be put in
+  order with the arrows; only empty batches, classes, subjects and modules can be deleted.
+- **Uploading**: on a module's page, drop files onto the upload area or choose them. Each
+  file is checked (an MP4 must be H.264 + AAC with fast-start; a PDF must be a real PDF),
+  then stored in the module's folder with a title made from its file name. Files that pass
+  are published straight away when the box is ticked; files with problems stay drafts.
+  Uploads stream to the content disk, so large videos are fine (limit `UPLOAD_MAX_BYTES`,
+  default 8 GB, and 1 GB must stay free).
+- **Each item's page**: preview (video player, PDF, image), title and description (shown to
+  students), publish / unpublish / archive, move to another module of the same class (the
+  file moves too; students keep their progress), and delete (the file goes to `.trash` for
+  30 days; students' progress on it is removed).
+- **Students**: search and filter by class, create a student, edit details, change class,
+  reset a password (signs the student out everywhere), deactivate, see what they watched.
+  **Import from CSV** creates many students at once (columns `student_code,username,full_name,class,password`;
+  an empty password gets a generated one, shown once on the result page).
+- **Folder sync**: the result of every sync, and *Sync now*.
+
+The dashboard needs no internet (no external fonts or scripts), works on any modern
+browser, and keeps staff signed in for 12 hours (`STAFF_SESSION_TTL_SECONDS`).
+
+### 7.2 Copying files into the folders
+
+From Windows: open `\\<server>\campus-lms` (OMV SMB share; sign in as `lmsadmin`) and copy
+into `videos\<batch>\<class>\<subject>\<module>\`. Each batch, class, subject and module
+page in the dashboard shows its folder. Set `CONTENT_SHARE_PATH` in `.env` (e.g.
+`'\\192.168.10.10\campus-lms\videos'`) to have the dashboard show the full share path.
+
+Rules for names:
+- Letters, digits, `.`, `-` and `_` only, **no spaces**; use `title.txt` (in a folder) or
+  `<file>.txt` (next to a file) for the names students see, e.g. `Lesson 2: Functions`.
+- A leading number and dash (`01-`, `02-`) sets the order and is removed from the name;
+  `-` and `_` become spaces, words are capitalised, and `class12` becomes `Class 12`.
+- The top folder must be a batch that exists in the dashboard. Folders for new classes,
+  subjects and modules may be created by hand; the sync adds them.
+- Exactly `<batch>/<class>/<subject>/<file>` or `<batch>/<class>/<subject>/<module>/<file>`.
+- A copied video should be checked first (`python3 scripts/inspect_media.py lesson.mp4`):
+  a file with problems is registered but stays a draft.
+
+### 7.3 The folder sync
+
+Every 5 minutes cron runs the sync on the server (as `lmsadmin`; *System → Scheduled Tasks* in OMV works too):
 
 ```cron
 */5 * * * * cd /home/lmsadmin/campus-lms/deploy && scripts/lms-admin.sh sync-videos --publish --archive-missing >> /srv/backups/lms/sync.log 2>&1
 ```
 
+It registers new files (published when they pass the check), follows moved and renamed
+files, refreshes replaced files and archives items whose files were removed. *Sync now* on
+the dashboard does the same at once. By hand:
+
+```bash
+scripts/lms-admin.sh sync-videos                     # new files as drafts; review them in the dashboard
+scripts/lms-admin.sh sync-videos --publish --archive-missing
+scripts/lms-admin.sh tree                            # the whole catalogue with folders and storage keys
+```
+
 A file copied in mid-way is registered with the size it had at that moment; the next run
-corrects the size and duration once the copy has finished (shown as `~ updated`). Students
-who open it in between get a short or failing lesson, so prefer copying into a folder outside
-`videos/` and moving it in when done.
-
-### 7.4 Moving, renaming, replacing and deleting files
-
-The sync keeps a lesson tied to its file, so you can tidy the share freely:
+corrects it. Prefer copying into a folder outside `videos/` and moving the finished file in.
 
 | You do this in the share | The next sync does this |
 |---|---|
-| Rename a file or folder, or move a file to another subject/chapter folder | The lesson keeps its status and every student's progress, moves to the new chapter, and takes the new order number. A name that was derived from the file name follows the new name; a title set by `<lesson>.txt`, the seed or `add-video` is kept. Shown as `~ moved`. |
-| Move the last lesson out of a chapter folder | The now-empty chapter disappears from the app, and comes back as soon as a file is placed in that folder again. |
-| Replace a file with a new version (same name) | Size and duration are refreshed. Shown as `~ updated`. |
-| Delete a file | With `--archive-missing` the lesson is archived (hidden from the app; progress is kept). Without it the lesson stays listed and fails to play. |
-| Delete the file and copy the same file in two places | Treated as a removal and two new lessons: a move is only recognised when exactly one file of that size and duration disappears and exactly one appears. |
+| Rename a file or folder, or move a file to another module or subject | The item keeps its status and every student's progress, moves to the new module, and takes the new order number. A name that came from the file name follows the new name; a title from `<file>.txt`, the dashboard or the seed is kept. (`~ moved` in the log) |
+| Move the last file out of a module folder | The empty module disappears; it comes back when a file is placed there again. |
+| Replace a file with a new version (same name) | Size and duration are refreshed. (`~ updated`) |
+| Delete a file | The item is archived (hidden; progress kept). |
+| Delete a file and put two identical copies elsewhere | Treated as a removal and two new items: a move is only recognised when exactly one matching file disappears and one appears (same size, plus same duration for videos or same checksum for notes and images). |
 
-Nothing is archived when the folder is completely empty, so a disk that failed to mount
-does not hide every lesson. If the storage comes back after lessons were archived,
-publish them again with `publish-video <storage key>`.
+Nothing is archived when the whole library looks missing (no files at all, or more than half
+of the items gone at once), so a disk that failed to mount does not hide every lesson. If
+items were archived by mistake, publish them again on their pages.
 
-For titles or placements the folder rules cannot express, register by hand instead:
-`add-video --chapter "Class 12/Computer Science/Python Basics" --storage-key <key> --title "..." --sort N`.
+### 7.4 The command line
 
-Other admin commands (`scripts/lms-admin.sh --help`): `create-class`, `create-subject`,
-`create-chapter [--publish]`, `publish-chapter`, `unpublish-chapter`, `create-student`,
-`set-password`, `assign-class`, `activate-student`, `deactivate-student`,
-`list-students`, `create-load-students` / `delete-load-students` (for §14),
-`scan-videos`, `add-video`, `unpublish-video`, `archive-video`, `check-media [--update]`,
-`purge-sessions`, `seed-demo`. Passwords are always prompted for (or read with
-`--password-stdin`), never passed as arguments.
+Every dashboard action also exists in `scripts/lms-admin.sh --help` (run on the server), for
+example: `create-batch`, `create-class --batch`, `create-subject --class "Batch 2026-27/Class 12"`,
+`create-module --subject "Batch 2026-27/Class 12/Physics" --publish`, `publish-module`,
+`add-content --module ... --storage-key ... --title ...`, `publish-content` / `unpublish-content` /
+`archive-content`, `create-student`, `set-password`, `assign-class`, `activate-student` /
+`deactivate-student`, `list-students`, `create-staff`, `set-staff-password`, `activate-staff` /
+`deactivate-staff`, `list-staff`, `check-media [--update]`, `scan-videos`, `purge-sessions`,
+`seed-demo`. The older names (`create-chapter`, `add-video`, `publish-video`, …) still work.
+Passwords are always prompted for (or read with `--password-stdin`), never passed as arguments.
 
-Example — create a student:
-
-```bash
-scripts/lms-admin.sh create-student --code S12-014 --username anu.k --name "Anu K" --class "Class 12"
-```
+**File permissions.** The API writes in `VIDEO_ROOT` (uploads, moves, deletes) as
+`LMS_CONTENT_UID:LMS_CONTENT_GID`, which must be the owner of the content folder, the same
+account the network share writes as (`lmsadmin` on OMV). `install.sh` sets them; check with
+`stat -c '%u %g' "$VIDEO_ROOT"`. If they do not match, the dashboard shows *The server cannot
+change files in …* and uploads fail with that message.
 
 ## 8. Verify the stack
 
@@ -311,7 +362,7 @@ docker compose up -d
 scripts/seed_demo_data.sh
 ```
 
-Video files in `VIDEO_ROOT` are not touched. Back up first if anything should be kept
+Content files in `VIDEO_ROOT` are not touched (re-register them with the folder sync, §7.3). Back up first if anything should be kept
 ([backup-restore.md](backup-restore.md)).
 
 ## 13. Run the tests
@@ -344,12 +395,36 @@ the output: [testing-plan.md](testing-plan.md#staged-load-test-server-side).
 
 ## 15. Upgrade path
 
-1. `scripts/backup.sh`
-2. `git pull`
-3. `docker compose up -d --build` (migrations apply on start; set `MIGRATE_ON_START=false`
-   to run them by hand with `docker compose run --rm api alembic upgrade head`)
-4. `scripts/smoke_test.py ...`
-5. If something is wrong: check out the previous version, rebuild, and restore the backup.
+One command, as the operator account on the server:
+
+```bash
+deploy/scripts/upgrade.sh          # add --share-path '\\<server>\campus-lms\videos' to show the share on the dashboard
+```
+
+It backs up the database and configuration, pauses the folder-sync cron line, adds settings
+newer versions need to `.env` (never changing existing values), runs `git pull --ff-only`
+and `docker compose up -d --build` (migrations apply on start; set `MIGRATE_ON_START=false`
+to run them by hand with `docker compose run --rm api alembic upgrade head`), restarts Nginx,
+waits until everything is healthy, runs `scripts/check_stack.sh`, and resumes the cron line.
+Then run the smoke test (§8). If something is wrong: check out the previous version,
+rebuild, and restore the backup ([backup-restore.md](backup-restore.md)).
+
+**Upgrading to batches, modules and the staff dashboard (October 2026).** This upgrade
+restructures the catalogue; nothing is lost and students keep their progress:
+
+- The database migration creates one batch for the current academic year (for example
+  *Batch 2026-27*, folder `batch-2026-27`) holding every existing class, renames chapters to
+  modules and videos to content items (same IDs), and prefixes every storage key with the
+  batch folder.
+- When the API starts it moves the existing `<class>/…` folders into `<batch folder>/…` to
+  match (`python -m app.cli relocate-content` shows what would move). A folder sync started
+  meanwhile waits for it.
+- The API now writes in `VIDEO_ROOT` as `LMS_CONTENT_UID:LMS_CONTENT_GID`, the owner of
+  `VIDEO_ROOT` (§4); `upgrade.sh` adds them to `.env` from the folder's owner.
+- `upgrade.sh` pauses the 5-minute sync cron job while upgrading and resumes it afterwards.
+- Create the first dashboard administrator (§7.1).
+- Install app 1.1 on the tablets for modules, notes and images. App 1.0 keeps working (it
+  shows the videos of each module) until the tablets are updated.
 
 ## 16. Moving the server to another site (pilot at another campus)
 

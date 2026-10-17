@@ -62,6 +62,18 @@ class Settings(BaseSettings):
     log_format: Literal["text", "json"] = "text"
     enable_api_docs: bool = True
 
+    # --- Staff web dashboard (/admin) -------------------------------------------
+    # Dashboard sign-in lifetime (seconds). 43200 = 12 hours.
+    staff_session_ttl_seconds: int = Field(default=43200, ge=600, le=7 * 86400)
+    # Largest file staff may upload, and free space to keep on the content disk.
+    upload_max_bytes: int = Field(default=8 * 1024**3, ge=1024**2)
+    upload_min_free_bytes: int = Field(default=1024**3, ge=0)
+    # How the content folder is reached from staff PCs, shown on the dashboard, e.g.
+    # \\172.18.1.169\campus-lms\videos (empty: show paths relative to the content folder).
+    content_share_path: str | None = None
+    # Times on the dashboard are shown in this time zone.
+    display_timezone: str = "Asia/Kolkata"
+
     @field_validator("media_signing_secret")
     @classmethod
     def _validate_secret(cls, value: str) -> str:

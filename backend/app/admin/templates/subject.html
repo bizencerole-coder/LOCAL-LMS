@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, textarea, checkbox, flag_badge, post_button, folder_note, move_buttons, counts as count_badges %}
+{% block title %}{{ subject.name }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="kicker">{{ icon('book') }}Subject in {{ batch.name }} › {{ school_class.name }}</p>
+    <h1>{{ subject.name }} {% if not subject.is_active %}{{ flag_badge(False, no='Hidden') }}{% endif %}</h1>
+    {% if subject.description %}<p class="muted">{{ subject.description }}</p>{% endif %}
+    {{ folder_note(share, subject.folder) }}
+  </div>
+  <div class="actions"><a class="btn btn-primary" href="#new-module">{{ icon('plus') }}<span>New module</span></a></div>
+</header>
+
+<section class="card">
+  <h2>{{ icon('folder') }}Modules</h2>
+  {% if modules %}
+  <table class="table">
+    <thead><tr><th class="narrow">Order</th><th>Module</th><th>Content</th><th>Visible</th><th>Folder</th><th></th></tr></thead>
+    <tbody>
+    {% for m in modules %}
+      {% set n = counts.get(m.id, (0, 0, 0, 0)) %}
+      <tr class="{{ '' if m.is_published else 'is-off' }}">
+        <td class="narrow">{{ move_buttons('/admin/modules/' ~ m.id ~ '/move') }}</td>
+        <td><a href="/admin/modules/{{ m.id }}"><b>{{ m.title }}</b></a>{% if drafts.get(m.id) %} <span class="badge badge-draft">{{ plural(drafts[m.id], 'draft') }}</span>{% endif %}</td>
+        <td>{{ count_badges(*n) }}</td>
+        <td>{{ flag_badge(m.is_published, 'Published', 'Hidden') }}</td>
+        <td><code>{{ m.folder or '(subject folder)' }}</code></td>
+        <td class="right"><a class="btn-icon" href="/admin/modules/{{ m.id }}" title="Open">{{ icon('right') }}</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No modules yet. A module is a unit of the subject (a chapter, a topic, a week…).</p>
+  {% endif %}
+</section>
+
+<div class="grid-2">
+  <section class="card" id="new-module">
+    <h2>{{ icon('plus') }}New module</h2>
+    <form method="post" action="/admin/subjects/{{ subject.id }}/modules">
+      {{ csrf() }}
+      {{ field('title', 'Title', required=True, maxlength=200, placeholder='Motion in a straight line') }}
+      {{ field('folder', 'Folder name', maxlength=100, hint='Optional; made from the order and title (e.g. 03-motion-in-a-straight-line).', pattern='[A-Za-z0-9][A-Za-z0-9._-]*') }}
+      {{ textarea('description', 'Description', rows=2) }}
+      {{ checkbox('is_published', 'Visible to students', True, hint='Content inside still has to be published.') }}
+      <button class="btn btn-primary" type="submit">{{ icon('plus') }}<span>Create module</span></button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>{{ icon('edit') }}Subject settings</h2>
+    <form method="post" action="/admin/subjects/{{ subject.id }}">
+      {{ csrf() }}
+      {{ field('name', 'Name', subject.name, required=True, maxlength=150) }}
+      {{ textarea('description', 'Description', subject.description, rows=2) }}
+      {{ checkbox('is_active', 'Visible to students', subject.is_active) }}
+      <button class="btn btn-primary" type="submit">{{ icon('check') }}<span>Save</span></button>
+    </form>
+    <div class="danger-zone">
+      {{ post_button('/admin/subjects/' ~ subject.id ~ '/delete', 'Delete subject', 'trash', 'btn btn-danger', confirm='Delete ' ~ subject.name ~ '? Only subjects without modules can be deleted.') }}
+    </div>
+  </section>
+</div>
+{% endblock %}

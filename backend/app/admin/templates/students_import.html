@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf %}
+{% block title %}Import students{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="kicker"><a href="/admin/students">{{ icon('users') }}Students</a></p>
+    <h1>Import students from CSV</h1>
+    <p class="muted">One student per line. The first line names the columns: <code>student_code,username,full_name,class,password</code>.
+      <code>class</code> is "Batch › Class" written as <code>Batch 2026-27/Class 12</code>; leave it empty to use the class chosen below.
+      Leave <code>password</code> empty to generate one. Existing usernames and student IDs are skipped.</p>
+  </div>
+</header>
+
+{% if results %}
+<section class="card">
+  {% if results.error %}
+    <div class="flash flash-error">{{ icon('alert') }}<span>{{ results.error }}</span></div>
+  {% else %}
+    <h2>{{ icon('check') }}{{ plural(results.created | length, 'student') }} created{% if results.skipped %}, {{ results.skipped | length }} skipped{% endif %}</h2>
+    {% if results.created %}
+    <p class="warn">{{ icon('key') }}<span>Copy these sign-in details now. Generated passwords are not shown again.</span></p>
+    <textarea class="mono" rows="{{ [results.created | length + 2, 14] | min }}" readonly>{{ results.csv }}</textarea>
+    {% endif %}
+    {% if results.skipped %}
+    <table class="table">
+      <thead><tr><th>Line</th><th>Student</th><th>Why it was skipped</th></tr></thead>
+      <tbody>{% for line, who, why in results.skipped %}<tr><td>{{ line }}</td><td>{{ who }}</td><td>{{ why }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="card">
+  <form method="post" action="/admin/students/import" enctype="multipart/form-data">
+    {{ csrf() }}
+    <label class="field"><span class="field-label">CSV file</span><input type="file" name="csv_file" accept=".csv,text/csv"></label>
+    <label class="field"><span class="field-label">… or paste the lines</span>
+      <textarea name="csv_text" rows="8" class="mono" placeholder="student_code,username,full_name,class,password
+S12-014,anu.k,Anu K,Batch 2026-27/Class 12,
+S12-015,ravi.m,Ravi M,,"></textarea></label>
+    <label class="field"><span class="field-label">Class for lines without one</span>
+      <select name="class_id"><option value="">No class</option>
+        {% for cid, label in class_options %}<option value="{{ cid }}">{{ label }}</option>{% endfor %}
+      </select></label>
+    <button class="btn btn-primary" type="submit">{{ icon('upload') }}<span>Import</span></button>
+  </form>
+</section>
+{% endblock %}

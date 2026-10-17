@@ -2,18 +2,22 @@
 
 Three layers:
 
-1. **Automated unit/API tests** — `backend/tests` (pytest, 96 tests, including
-   `test_regressions.py` for defects found in review) and `mobile/test` (flutter test,
-   26 tests). Run on every change.
+1. **Automated unit/API tests** — `backend/tests` (pytest, 136 tests: student API, staff
+   dashboard, folder sync, migration helpers, CLI, and `test_regressions.py` for defects found
+   in review) and `mobile/test` (flutter test, 75 tests). Run on every change.
 2. **Stack smoke test** — `deploy/scripts/smoke_test.py` against the running Docker stack
-   (real Nginx, PostgreSQL and files; 29 checks). Run after every deployment, together
+   (real Nginx, PostgreSQL and files; 33 checks, including the dashboard sign-in redirect,
+   PDF delivery and the endpoints app 1.0 uses). Run after every deployment, together
    with `deploy/scripts/check_stack.sh`.
 3. **End-to-end app test** — `mobile/integration_test/app_flow_test.dart` drives the real
    app on an emulator or tablet against the running stack: sign-in (wrong then right
-   password), class-scoped browsing, playback, seek, speed, full-screen, pause, leave and
-   resume within ±10 s, Continue Watching, My Learning, sign-out.
+   password), class-scoped browsing of subjects and modules, playback, seek, speed,
+   full-screen, pause, leave and resume within ±10 s, the notes (PDF) viewer, Continue
+   Watching, My Learning, sign-out.
 4. **Supervised device tests** — two or more physical tablets on the campus Wi-Fi,
-   recorded in the report template below. Results so far: [test-report-2026-10-16.md](test-report-2026-10-16.md).
+   recorded in the report template below, plus a staff member using the dashboard on a
+   staff PC (create a module, upload a video and notes, publish, check on a tablet).
+   Results so far: [test-report-2026-10-16.md](test-report-2026-10-16.md).
 
 ## Coverage of PRD acceptance criteria
 

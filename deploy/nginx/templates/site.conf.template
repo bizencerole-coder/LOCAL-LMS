@@ -9,6 +9,7 @@ upstream lms_api {
 
 # Per-client-IP login throttle (FR-01): 10 attempts/minute, short bursts allowed.
 limit_req_zone $binary_remote_addr zone=lms_login:10m rate=10r/m;
+limit_req_zone $binary_remote_addr zone=lms_admin_login:1m rate=10r/m;
 limit_req_status 429;
 
 server {
@@ -61,13 +62,38 @@ server {
         proxy_pass http://lms_api;
     }
 
+    # Staff web dashboard. Pages and form posts are small; sign-in is throttled.
+    location = / { proxy_pass http://lms_api; }
+    location = /admin { proxy_pass http://lms_api; }
+    location = /admin/login {
+        limit_req zone=lms_admin_login burst=5 nodelay;
+        proxy_pass http://lms_api;
+    }
+    location /admin/ {
+        client_max_body_size 10m;
+        # "Sync now" can take a while on a large library.
+        proxy_read_timeout 300s;
+        proxy_pass http://lms_api;
+    }
+    # Uploads stream straight through to the API, which writes them to the content disk
+    # (no buffering here). The API enforces UPLOAD_MAX_BYTES; keep this at least as large.
+    location /admin/upload/ {
+        client_max_body_size 8g;
+        client_body_timeout 300s;
+        proxy_request_buffering off;
+        proxy_send_timeout 900s;
+        proxy_read_timeout 900s;
+        proxy_pass http://lms_api;
+    }
+
     # Interactive API docs for the prototype (disable with ENABLE_API_DOCS=false).
     # Swagger UI assets are served by the API itself, so /docs works without internet.
     location = /docs         { proxy_pass http://lms_api; }
     location /docs-assets/   { proxy_pass http://lms_api; }
     location = /openapi.json { proxy_pass http://lms_api; }
 
-    # Video delivery (FR-04/FR-05). Requires a signed, unexpired URL issued by the API:
+    # Content delivery: videos, PDF notes, images (FR-04/FR-05). Requires a signed,
+    # unexpired URL issued by the API:
     #   /media/<storage_key>?expires=<unix>&sid=<student>&md5=<signature>
     # 403 = missing/invalid signature, 410 = expired. Nginx handles Range/206 natively.
     location /media/ {
@@ -105,6 +131,10 @@ server {
 
         types {
             video/mp4 mp4 m4v;
+            application/pdf pdf;
+            image/jpeg jpg jpeg;
+            image/png png;
+            image/webp webp;
         }
         default_type application/octet-stream;
 

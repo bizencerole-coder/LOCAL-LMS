@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, checkbox, flag_badge, type_icon, post_button %}
+{% block title %}{{ student.full_name }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="kicker"><a href="/admin/students">{{ icon('users') }}Students</a></p>
+    <h1>{{ student.full_name }} {{ flag_badge(student.is_active) }}</h1>
+    <p class="muted">Signs in as <code>{{ student.username }}</code> or <code>{{ student.student_code }}</code> · {{ plural(sessions, 'active session') }}</p>
+  </div>
+  <div class="actions">
+    {{ post_button('/admin/students/' ~ student.id ~ '/signout', 'Sign out of all tablets', 'logout', 'btn') }}
+  </div>
+</header>
+
+<div class="grid-2">
+  <section class="card">
+    <h2>{{ icon('edit') }}Details</h2>
+    <form method="post" action="/admin/students/{{ student.id }}">
+      {{ csrf() }}
+      {{ field('full_name', 'Full name', student.full_name, required=True, maxlength=200) }}
+      {{ field('username', 'Username', student.username, required=True, maxlength=100) }}
+      {{ field('student_code', 'Student ID', student.student_code, required=True, maxlength=50) }}
+      <label class="field"><span class="field-label">Class</span>
+        <select name="class_id"><option value="">No class</option>
+          {% for cid, label in class_options %}<option value="{{ cid }}"{% if cid == student.class_id %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select></label>
+      {{ checkbox('is_active', 'Active', student.is_active, hint='An inactive student cannot sign in.') }}
+      <button class="btn btn-primary" type="submit">{{ icon('check') }}<span>Save</span></button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>{{ icon('key') }}Reset password</h2>
+    <form method="post" action="/admin/students/{{ student.id }}/password">
+      {{ csrf() }}
+      {{ field('password', 'New password', type='password', required=True, hint='At least 8 characters. The student is signed out everywhere.', autocomplete='new-password') }}
+      {{ field('password_confirm', 'Repeat password', type='password', required=True, autocomplete='new-password') }}
+      <button class="btn" type="submit">{{ icon('key') }}<span>Set password</span></button>
+    </form>
+    {% if staff.is_admin %}
+    <div class="danger-zone">
+      {{ post_button('/admin/students/' ~ student.id ~ '/delete', 'Delete student', 'trash', 'btn btn-danger', confirm='Delete ' ~ student.full_name ~ ' and all their progress? This cannot be undone. To stop them signing in, uncheck Active instead.') }}
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <h2>{{ icon('clock') }}Recent activity</h2>
+  {% if progress %}
+  <table class="table">
+    <thead><tr><th></th><th>Item</th><th>Progress</th><th>When</th></tr></thead>
+    <tbody>
+    {% for p, title, kind, duration, content_id in progress %}
+      <tr>
+        <td class="narrow">{{ type_icon(kind) }}</td>
+        <td><a href="/admin/contents/{{ content_id }}">{{ title }}</a></td>
+        <td>{% if p.is_completed %}<span class="badge badge-published">{{ 'Watched' if kind == 'video' else 'Opened' }}</span>
+            {% elif kind == 'video' %}{{ p.position_seconds | duration or '0:00' }}{% if duration %} of {{ duration | duration }}{% endif %}{% endif %}</td>
+        <td class="muted small">{{ p.last_watched_at | time }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Nothing opened yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

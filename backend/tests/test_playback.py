@@ -25,7 +25,7 @@ def test_authorized_playback_returns_signed_nginx_url(client, catalog, settings)
     assert response.status_code == 200
     body = response.json()
     url = body["playback_url"]
-    assert url.startswith("http://testserver/media/class12/cs/lesson-01.mp4?")
+    assert url.startswith("http://testserver/media/batch-2026-27/class12/cs/01-basics/lesson-01.mp4?")
     assert nginx_secure_link_ok(url, settings.media_signing_secret)
     assert parse_qs(urlsplit(url).query)["sid"] == [str(catalog.student.id)]
     assert body["duration_seconds"] == 1200

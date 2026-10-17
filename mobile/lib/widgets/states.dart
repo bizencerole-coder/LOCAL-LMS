@@ -4,9 +4,12 @@ import '../api/api_client.dart';
 import '../state/app_state.dart';
 
 class LoadingView extends StatelessWidget {
-  const LoadingView({super.key, this.message});
+  const LoadingView({super.key, this.message, this.progress});
 
   final String? message;
+
+  /// 0.0–1.0 to show how far a download got; null for a spinner.
+  final double? progress;
 
   @override
   Widget build(BuildContext context) {
@@ -14,7 +17,7 @@ class LoadingView extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const CircularProgressIndicator(),
+          CircularProgressIndicator(value: progress),
           if (message != null) ...[
             const SizedBox(height: 16),
             Text(message!, style: Theme.of(context).textTheme.bodyMedium),

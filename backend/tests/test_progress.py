@@ -2,7 +2,7 @@ from sqlalchemy import func, select
 
 from app.config import get_settings
 from app.main import app
-from app.models import StudentVideoProgress
+from app.models import ContentProgress as StudentVideoProgress
 
 from .conftest import login
 

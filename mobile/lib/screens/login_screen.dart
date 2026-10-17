@@ -77,7 +77,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       const SizedBox(height: 12),
                       Text('Campus LMS', textAlign: TextAlign.center, style: theme.textTheme.headlineMedium),
                       const SizedBox(height: 4),
-                      Text('Sign in to watch your lessons',
+                      Text('Sign in for your videos and notes',
                           textAlign: TextAlign.center, style: theme.textTheme.bodyMedium),
                       const SizedBox(height: 32),
                       TextFormField(

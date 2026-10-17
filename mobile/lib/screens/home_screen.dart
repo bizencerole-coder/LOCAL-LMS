@@ -1,13 +1,18 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../api/models.dart';
 import '../state/app_state.dart';
 import '../util/format.dart';
+import '../widgets/catalog_style.dart';
 import '../widgets/connection_indicator.dart';
+import '../widgets/content_tile.dart';
+import '../widgets/layout.dart';
 import '../widgets/states.dart';
-import 'chapters_screen.dart';
 import 'my_learning_screen.dart';
-import 'player_screen.dart';
+import 'open_content.dart';
+import 'subject_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -19,7 +24,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _tab = 0;
   final _subjectsKey = GlobalKey<LoaderState<_HomeData>>();
-  final _learningKey = GlobalKey<LoaderState<List<RecentItem>>>();
+  final _learningKey = GlobalKey<LoaderState<List<ContinueItem>>>();
 
   @override
   void initState() {
@@ -77,7 +82,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: Text(student?.fullName ?? ''),
-                  subtitle: Text([student?.className, student?.studentCode].nonNulls.join(' · ')),
+                  subtitle: Text(
+                      [student?.batchName, student?.className, student?.studentCode].nonNulls.join(' · ')),
                 ),
               ),
               const PopupMenuDivider(),
@@ -123,7 +129,7 @@ class _HomeData {
   const _HomeData(this.subjects, this.continueWatching);
 
   final List<SubjectItem> subjects;
-  final List<RecentItem> continueWatching;
+  final List<ContinueItem> continueWatching;
 }
 
 class _SubjectsTab extends StatelessWidget {
@@ -141,60 +147,116 @@ class _SubjectsTab extends StatelessWidget {
         final api = AppScope.read(context).api; // the current client, not the one at build time
         final results = await Future.wait([
           api.subjects(),
-          api.recent(limit: 10, includeCompleted: false),
+          api.continueItems(limit: 10, includeCompleted: false),
         ]);
-        return _HomeData(results[0] as List<SubjectItem>, results[1] as List<RecentItem>);
+        return _HomeData(results[0] as List<SubjectItem>, results[1] as List<ContinueItem>);
       },
       builder: (context, data, reload) {
         final theme = Theme.of(context);
         return RefreshIndicator(
           onRefresh: reload,
-          child: ListView(
-            padding: const EdgeInsets.all(24),
-            children: [
-              Text('Hello, ${student?.fullName ?? ''}', style: theme.textTheme.headlineSmall),
-              if (student?.className != null) Text(student!.className!, style: theme.textTheme.bodyLarge),
-              if (data.continueWatching.isNotEmpty) ...[
-                const SizedBox(height: 24),
-                Text('Continue watching', style: theme.textTheme.titleLarge),
+          child: LayoutBuilder(
+            builder: (context, constraints) => ListView(
+              padding: readablePadding(constraints.maxWidth),
+              children: [
+                _WelcomeCard(student: student),
+                if (data.continueWatching.isNotEmpty) ...[
+                  const SizedBox(height: 28),
+                  Text('Continue watching', style: theme.textTheme.titleLarge),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: _ContinueCard.height(context),
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: data.continueWatching.length,
+                      separatorBuilder: (_, _) => const SizedBox(width: 8),
+                      itemBuilder: (context, i) => _ContinueCard(item: data.continueWatching[i], onReturn: onReturn),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 28),
+                Text('Subjects', style: theme.textTheme.titleLarge),
                 const SizedBox(height: 12),
-                SizedBox(
-                  // Card content scales with the system font size.
-                  height: 52 + MediaQuery.textScalerOf(context).scale(80),
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: data.continueWatching.length,
-                    separatorBuilder: (_, _) => const SizedBox(width: 12),
-                    itemBuilder: (context, i) => _ContinueCard(item: data.continueWatching[i], onReturn: onReturn),
+                if (data.subjects.isEmpty)
+                  const MessageView(
+                    icon: Icons.inbox_outlined,
+                    title: 'No subjects yet',
+                    message: 'Subjects for your class will appear here.',
+                  )
+                else
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 320,
+                      mainAxisExtent: _SubjectCard.height(context),
+                      crossAxisSpacing: 8,
+                      mainAxisSpacing: 8,
+                    ),
+                    itemCount: data.subjects.length,
+                    itemBuilder: (context, i) => _SubjectCard(subject: data.subjects[i], onReturn: onReturn),
                   ),
-                ),
               ],
-              const SizedBox(height: 24),
-              Text('Subjects', style: theme.textTheme.titleLarge),
-              const SizedBox(height: 12),
-              if (data.subjects.isEmpty)
-                const MessageView(
-                  icon: Icons.inbox_outlined,
-                  title: 'No subjects yet',
-                  message: 'Lessons assigned to your class will appear here.',
-                )
-              else
-                GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 320,
-                    mainAxisExtent: 40 + MediaQuery.textScalerOf(context).scale(80),
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
-                  ),
-                  itemCount: data.subjects.length,
-                  itemBuilder: (context, i) => _SubjectCard(subject: data.subjects[i], onReturn: onReturn),
-                ),
-            ],
+            ),
           ),
         );
       },
+    );
+  }
+}
+
+/// The student's name with their batch and class.
+class _WelcomeCard extends StatelessWidget {
+  const _WelcomeCard({required this.student});
+
+  final Student? student;
+
+  /// "DS" for "Demo Student".
+  static String _initials(String name) {
+    final words = name.trim().split(RegExp(r'\s+')).where((word) => word.isNotEmpty).toList();
+    if (words.isEmpty) return '';
+    final first = words.first.characters.first;
+    final last = words.length > 1 ? words.last.characters.first : '';
+    return '$first$last'.toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final name = student?.fullName ?? '';
+    final initials = _initials(name);
+    final group = student?.groupLabel ?? '';
+    return Card(
+      elevation: 0,
+      color: scheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 28,
+              backgroundColor: scheme.primary,
+              foregroundColor: scheme.onPrimary,
+              child: initials.isEmpty ? const Icon(Icons.person_rounded) : Text(initials),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Hello, $name',
+                      style: theme.textTheme.headlineSmall?.copyWith(color: scheme.onPrimaryContainer)),
+                  if (group.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(group, style: theme.textTheme.bodyLarge?.copyWith(color: scheme.onPrimaryContainer)),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -205,29 +267,79 @@ class _SubjectCard extends StatelessWidget {
   final SubjectItem subject;
   final VoidCallback onReturn;
 
+  static const _stripe = 6.0;
+
+  /// Room for the stripe, badge row, two lines of name, two of counts and the progress
+  /// bar at the student's text size.
+  static double height(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return 8 + _stripe + 32 + 44 + 12 + // card margins, stripe, padding, badge row
+        textLinesHeight(context, text.titleMedium, 2) +
+        6 +
+        textLinesHeight(context, text.bodySmall, 2) +
+        12 +
+        CompletionBar.height(context);
+  }
+
+  /// "4 modules · 6 videos · 2 notes".
+  String get _summary {
+    final counts = contentCounts(
+      videos: subject.videoCount,
+      notes: subject.notesCount,
+      images: subject.imageCount,
+      total: subject.contentCount,
+    );
+    if (subject.moduleCount == 0) return 'No modules yet';
+    return [plural(subject.moduleCount, 'module'), if (counts.isNotEmpty) counts].join(' · ');
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final color = subjectColor(subject.name);
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () async {
-          await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChaptersScreen(subject: subject)));
+          await Navigator.of(context).push(MaterialPageRoute(builder: (_) => SubjectScreen(subject: subject)));
           onReturn();
         },
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(subject.name, style: theme.textTheme.titleMedium, maxLines: 2, overflow: TextOverflow.ellipsis),
-              Text(
-                '${plural(subject.chapterCount, 'chapter')} · ${plural(subject.videoCount, 'lesson')}',
-                style: theme.textTheme.bodySmall,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(height: _stripe, color: inkOf(color, theme.brightness)),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        SubjectBadge(name: subject.name, size: 44),
+                        const Spacer(),
+                        Icon(Icons.chevron_right_rounded, color: scheme.onSurfaceVariant),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(subject.name,
+                        style: theme.textTheme.titleMedium, maxLines: 2, overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 6),
+                    Text(
+                      _summary,
+                      style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const Spacer(),
+                    if (subject.contentCount > 0)
+                      CompletionBar(completed: subject.completedCount, total: subject.contentCount, color: color),
+                  ],
+                ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -237,22 +349,34 @@ class _SubjectCard extends StatelessWidget {
 class _ContinueCard extends StatelessWidget {
   const _ContinueCard({required this.item, required this.onReturn});
 
-  final RecentItem item;
+  final ContinueItem item;
   final VoidCallback onReturn;
+
+  /// Room for the subject row, two lines of title and the resume line at the student's text size.
+  static double height(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return 8 + 32 + // card margins, padding
+        math.max(32.0, textLinesHeight(context, text.labelMedium)) +
+        10 +
+        textLinesHeight(context, text.titleSmall, 2) +
+        8 +
+        math.max(18.0, textLinesHeight(context, text.bodySmall)) +
+        12; // progress bar
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final video = item.video;
-    final fraction = video.progress?.fraction(video.durationSeconds);
+    final content = item.content;
+    final isVideo = content.type == ContentType.video;
+    final fraction = isVideo ? content.progress?.fraction(content.durationSeconds) : null;
     return SizedBox(
       width: 280,
       child: Card(
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () async {
-            await openLesson(context,
-                videoId: video.id, title: video.title, subtitle: '${item.subjectName} › ${item.chapterTitle}');
+            await openContentItem(context, content, subtitle: item.location);
             onReturn();
           },
           child: Padding(
@@ -260,16 +384,28 @@ class _ContinueCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(item.subjectName, style: theme.textTheme.labelMedium, maxLines: 1, overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 4),
-                Text(video.title, style: theme.textTheme.titleSmall, maxLines: 2, overflow: TextOverflow.ellipsis),
+                Row(children: [
+                  ContentTypeIcon(type: content.type, size: 32),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(item.subjectName,
+                        style: theme.textTheme.labelMedium, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+                ]),
+                const SizedBox(height: 10),
+                Text(content.title, style: theme.textTheme.titleSmall, maxLines: 2, overflow: TextOverflow.ellipsis),
                 const Spacer(),
                 Row(children: [
-                  const Icon(Icons.play_circle_outline, size: 18),
+                  Icon(isVideo ? Icons.play_arrow_rounded : Icons.open_in_new_rounded, size: 18),
                   const SizedBox(width: 6),
                   Expanded(
-                    child: Text('Resume at ${formatSeconds(video.progress?.positionSeconds)}',
-                        style: theme.textTheme.bodySmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    child: Text(
+                        isVideo
+                            ? 'Resume at ${formatSeconds(content.progress?.positionSeconds)}'
+                            : ContentTypeStyle.of(content.type).label,
+                        style: theme.textTheme.bodySmall,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
                   ),
                 ]),
                 if (fraction != null) ...[

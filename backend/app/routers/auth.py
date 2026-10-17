@@ -14,8 +14,8 @@ from ..db import get_db
 from ..deps import Auth, get_auth
 from ..errors import ApiError
 from ..logging_config import log_event
-from ..models import AuthSession, SchoolClass, Student, utcnow
-from ..schemas import ClassInfo, LoginRequest, LoginResponse, MeResponse, StudentSummary
+from ..models import AuthSession, Batch, SchoolClass, Student, utcnow
+from ..schemas import LoginRequest, LoginResponse, MeResponse, NamedRef, StudentSummary
 from ..security import (
     burn_dummy_verification,
     hash_password,
@@ -87,12 +87,19 @@ def login(
     )
     db.commit()
 
-    class_name = db.scalar(select(SchoolClass.name).where(SchoolClass.id == student.class_id))
+    row = db.execute(
+        select(SchoolClass.name, Batch.name)
+        .join(Batch, SchoolClass.batch_id == Batch.id)
+        .where(SchoolClass.id == student.class_id)
+    ).first()
+    class_name, batch_name = row if row else (None, None)
     log_event(logger, "login_succeeded", student_id=student.id)
     return LoginResponse(
         access_token=token,
         expires_in=settings.session_ttl_seconds,
-        student=StudentSummary(id=student.id, full_name=student.full_name, class_name=class_name),
+        student=StudentSummary(
+            id=student.id, full_name=student.full_name, class_name=class_name, batch_name=batch_name
+        ),
     )
 
 
@@ -110,10 +117,12 @@ def logout(auth: Auth = Depends(get_auth), db: Session = Depends(get_db)) -> Res
 def me(auth: Auth = Depends(get_auth), db: Session = Depends(get_db)) -> MeResponse:
     student = auth.student
     school_class = db.get(SchoolClass, student.class_id) if student.class_id else None
+    batch = db.get(Batch, school_class.batch_id) if school_class else None
     return MeResponse(
         id=student.id,
         student_code=student.student_code,
         username=student.username,
         full_name=student.full_name,
-        school_class=ClassInfo(id=school_class.id, name=school_class.name) if school_class else None,
+        school_class=NamedRef(id=school_class.id, name=school_class.name) if school_class else None,
+        batch=NamedRef(id=batch.id, name=batch.name) if batch else None,
     )

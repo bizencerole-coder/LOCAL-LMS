@@ -1,4 +1,9 @@
-"""SQLAlchemy models (PRD section 8).
+"""SQLAlchemy models.
+
+Content hierarchy: Batch -> Class -> Subject -> Module -> Content (video, PDF notes, image).
+Every level also has a ``folder`` name: the matching directory under VIDEO_ROOT, so the
+files on the server mirror what the app shows (``<batch>/<class>/<subject>/<module>/<file>``).
+Display names can change freely; folders are fixed when an item is created.
 
 Schema changes must go through Alembic migrations in ``alembic/versions``.
 """
@@ -50,25 +55,71 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
-class VideoStatus(enum.StrEnum):
+class ContentStatus(enum.StrEnum):
     DRAFT = "draft"
     PUBLISHED = "published"
     ARCHIVED = "archived"
 
 
-class SchoolClass(Base):
-    """A class/grade such as "Class 12". Named to avoid the Python keyword."""
+class ContentType(enum.StrEnum):
+    VIDEO = "video"
+    PDF = "pdf"  # shown to students as "Notes"
+    IMAGE = "image"
 
-    __tablename__ = "classes"
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    name: Mapped[str] = mapped_column(String(100), unique=True)
-    description: Mapped[str | None] = mapped_column(Text)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, server_default=func.now()
+class StaffRole(enum.StrEnum):
+    ADMIN = "admin"  # everything, including staff accounts
+    STAFF = "staff"  # content and students
+
+
+def _created() -> Mapped[datetime]:
+    return mapped_column(DateTime(timezone=True), default=utcnow, server_default=func.now())
+
+
+def _updated() -> Mapped[datetime]:
+    return mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, server_default=func.now()
     )
 
+
+class Batch(Base):
+    """A cohort or academic year, e.g. "Batch 2026-27". Holds classes."""
+
+    __tablename__ = "batches"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    folder: Mapped[str] = mapped_column(String(100), unique=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = _updated()
+
+    classes: Mapped[list[SchoolClass]] = relationship(back_populates="batch")
+
+
+class SchoolClass(Base):
+    """A class/grade such as "Class 12" within a batch. Named to avoid the Python keyword."""
+
+    __tablename__ = "classes"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "name", name="uq_classes_batch_id_name"),
+        UniqueConstraint("batch_id", "folder", name="uq_classes_batch_id_folder"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    batch_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("batches.id", ondelete="RESTRICT"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    folder: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = _created()
+
+    batch: Mapped[Batch] = relationship(back_populates="classes")
     subjects: Mapped[list[Subject]] = relationship(back_populates="school_class")
     students: Mapped[list[Student]] = relationship(back_populates="school_class")
 
@@ -87,39 +138,42 @@ class Student(Base):
         ForeignKey("classes.id", ondelete="RESTRICT"), index=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = _updated()
 
     school_class: Mapped[SchoolClass | None] = relationship(back_populates="students")
 
 
 class Subject(Base):
     __tablename__ = "subjects"
-    __table_args__ = (UniqueConstraint("class_id", "name", name="uq_subjects_class_id_name"),)
+    __table_args__ = (
+        UniqueConstraint("class_id", "name", name="uq_subjects_class_id_name"),
+        UniqueConstraint("class_id", "folder", name="uq_subjects_class_id_folder"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     class_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("classes.id", ondelete="RESTRICT"), index=True
     )
     name: Mapped[str] = mapped_column(String(150))
+    folder: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(Text)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = _created()
 
     school_class: Mapped[SchoolClass] = relationship(back_populates="subjects")
-    chapters: Mapped[list[Chapter]] = relationship(back_populates="subject")
+    modules: Mapped[list[Module]] = relationship(back_populates="subject")
 
 
-class Chapter(Base):
-    __tablename__ = "chapters"
+class Module(Base):
+    """A unit of a subject (formerly "chapter"). ``folder`` is empty for files that sit
+    directly in the subject folder (shown as a module called "General")."""
+
+    __tablename__ = "modules"
     __table_args__ = (
-        UniqueConstraint("subject_id", "title", name="uq_chapters_subject_id_title"),
+        UniqueConstraint("subject_id", "title", name="uq_modules_subject_id_title"),
+        UniqueConstraint("subject_id", "folder", name="uq_modules_subject_id_folder"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -127,26 +181,31 @@ class Chapter(Base):
         ForeignKey("subjects.id", ondelete="RESTRICT"), index=True
     )
     title: Mapped[str] = mapped_column(String(200))
+    folder: Mapped[str] = mapped_column(String(100))
     description: Mapped[str | None] = mapped_column(Text)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     is_published: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = _created()
 
-    subject: Mapped[Subject] = relationship(back_populates="chapters")
-    videos: Mapped[list[Video]] = relationship(back_populates="chapter")
+    subject: Mapped[Subject] = relationship(back_populates="modules")
+    contents: Mapped[list[Content]] = relationship(back_populates="module")
 
 
-class Video(Base):
-    __tablename__ = "videos"
+class Content(Base):
+    """One item a student opens: a video, PDF notes or an image."""
+
+    __tablename__ = "contents"
     __table_args__ = (
         CheckConstraint("status IN ('draft', 'published', 'archived')", name="status_valid"),
+        CheckConstraint("content_type IN ('video', 'pdf', 'image')", name="content_type_valid"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    chapter_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("chapters.id", ondelete="RESTRICT"), index=True
+    module_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("modules.id", ondelete="RESTRICT"), index=True
+    )
+    content_type: Mapped[str] = mapped_column(
+        String(20), default=ContentType.VIDEO.value, server_default=ContentType.VIDEO.value
     )
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text)
@@ -159,44 +218,50 @@ class Video(Base):
     )
     resolution_width: Mapped[int | None] = mapped_column(Integer)
     resolution_height: Mapped[int | None] = mapped_column(Integer)
+    # SHA-256 of the file (uploads, notes and images), used to follow moved files.
+    checksum: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(
-        String(20), default=VideoStatus.DRAFT.value, server_default=VideoStatus.DRAFT.value,
+        String(20),
+        default=ContentStatus.DRAFT.value,
+        server_default=ContentStatus.DRAFT.value,
         index=True,
     )
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = _updated()
 
-    chapter: Mapped[Chapter] = relationship(back_populates="videos")
+    module: Mapped[Module] = relationship(back_populates="contents")
+
+    @property
+    def is_video(self) -> bool:
+        return self.content_type == ContentType.VIDEO.value
 
 
-class StudentVideoProgress(Base):
-    __tablename__ = "student_video_progress"
+class ContentProgress(Base):
+    """Per-student progress: playback position for videos, "opened" for notes and images."""
+
+    __tablename__ = "student_content_progress"
     __table_args__ = (
-        UniqueConstraint("student_id", "video_id", name="uq_student_video_progress_student_video"),
-        Index("ix_student_video_progress_student_last_watched", "student_id", "last_watched_at"),
+        UniqueConstraint(
+            "student_id", "content_id", name="uq_student_content_progress_student_content"
+        ),
+        Index("ix_student_content_progress_student_last_watched", "student_id", "last_watched_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     student_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"))
-    video_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("videos.id", ondelete="CASCADE"), index=True
+    content_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("contents.id", ondelete="CASCADE"), index=True
     )
     position_seconds: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     duration_seconds: Mapped[int | None] = mapped_column(Integer)
     is_completed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_watched_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, server_default=func.now()
-    )
+    last_watched_at: Mapped[datetime] = _created()
 
 
 class AuthSession(Base):
-    """Opaque bearer-token session. Only a SHA-256 hash of the token is stored."""
+    """Student bearer-token session. Only a SHA-256 hash of the token is stored."""
 
     __tablename__ = "sessions"
 
@@ -205,10 +270,70 @@ class AuthSession(Base):
         ForeignKey("students.id", ondelete="CASCADE"), index=True
     )
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = _created()
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     student: Mapped[Student] = relationship()
+
+
+class StaffUser(Base):
+    """A teacher or administrator who signs in to the web dashboard."""
+
+    __tablename__ = "staff_users"
+    __table_args__ = (CheckConstraint("role IN ('admin', 'staff')", name="role_valid"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    # Stored lower-case.
+    username: Mapped[str] = mapped_column(String(100), unique=True)
+    full_name: Mapped[str] = mapped_column(String(200))
+    password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(
+        String(20), default=StaffRole.STAFF.value, server_default=StaffRole.STAFF.value
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = _updated()
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == StaffRole.ADMIN.value
+
+
+class StaffSession(Base):
+    """Dashboard session (HttpOnly cookie). Only a SHA-256 hash of the token is stored."""
+
+    __tablename__ = "staff_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    staff_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("staff_users.id", ondelete="CASCADE"), index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = _created()
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    staff: Mapped[StaffUser] = relationship()
+
+
+class SyncRun(Base):
+    """One run of the folder sync (cron/CLI or the dashboard), shown on the dashboard."""
+
+    __tablename__ = "sync_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    trigger: Mapped[str] = mapped_column(String(20))  # "cli" or "dashboard"
+    staff_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("staff_users.id", ondelete="SET NULL")
+    )
+    started_at: Mapped[datetime] = _created()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    registered: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    moved: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    updated: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    archived: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    skipped: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    problems: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    report: Mapped[str | None] = mapped_column(Text)

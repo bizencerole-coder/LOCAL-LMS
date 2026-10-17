@@ -20,6 +20,7 @@ def test_login_success_returns_token_and_student(client, catalog):  # T-01, AC-0
         "id": str(catalog.student.id),
         "full_name": catalog.student.full_name,
         "class_name": "Class 12",
+        "batch_name": "Batch 2026-27",
     }
     assert response.headers["X-Request-ID"]
 
@@ -62,6 +63,7 @@ def test_me_returns_profile(client, catalog):
     assert body["username"] == "demo.student"
     assert body["student_code"] == "S12-001"
     assert body["class"] == {"id": str(catalog.class12.id), "name": "Class 12"}
+    assert body["batch"] == {"id": str(catalog.batch.id), "name": "Batch 2026-27"}
 
 
 def test_logout_revokes_the_session(client, catalog):

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, flag_badge %}
+{% block title %}Staff{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Staff accounts</h1>
+    <p class="muted">Staff manage content and students. Administrators can also manage staff accounts.</p>
+  </div>
+</header>
+
+<section class="card">
+  <table class="table">
+    <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Last sign-in</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for m in members %}
+      <tr class="{{ '' if m.is_active else 'is-off' }}">
+        <td><a href="/admin/staff/{{ m.id }}"><b>{{ m.full_name }}</b></a>{% if m.id == staff.id %} <span class="muted small">(you)</span>{% endif %}</td>
+        <td><code>{{ m.username }}</code></td>
+        <td>{{ 'Administrator' if m.is_admin else 'Staff' }}</td>
+        <td class="muted small">{{ m.last_login_at | ago }}</td>
+        <td>{{ flag_badge(m.is_active) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>{{ icon('plus') }}New staff account</h2>
+  <form method="post" action="/admin/staff" class="form-grid">
+    {{ csrf() }}
+    {{ field('full_name', 'Full name', required=True, maxlength=200) }}
+    {{ field('username', 'Username', required=True, maxlength=100, autocomplete='off') }}
+    <label class="field"><span class="field-label">Role</span>
+      <select name="role"><option value="staff">Staff (content and students)</option><option value="admin">Administrator (also staff accounts)</option></select></label>
+    {{ field('password', 'Password', type='password', required=True, hint='At least 8 characters.', autocomplete='new-password') }}
+    {{ field('password_confirm', 'Repeat password', type='password', required=True, autocomplete='new-password') }}
+    <div class="form-actions"><button class="btn btn-primary" type="submit">{{ icon('plus') }}<span>Create account</span></button></div>
+  </form>
+</section>
+{% endblock %}

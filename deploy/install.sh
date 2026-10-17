@@ -475,6 +475,11 @@ resolve_settings() {
     LMS_HTTP_PORT="$(env_get LMS_HTTP_PORT)"; LMS_HTTP_PORT="${LMS_HTTP_PORT:-80}"
     LAN_IP="$(detect_lan_ip)"
 }
+# uid (%u) or gid (%g) owning the content folder: the API container runs as that user so
+# files from the dashboard and from the network share can be edited by both.
+content_owner() {
+    stat -c "$1" "$VIDEO_ROOT" 2>/dev/null || { [ "$1" = %u ] && id -u || id -g; }
+}
 generate_secret() {
     if $DRY_RUN; then printf '%s' "<generated>"; return 0; fi
     "$PYTHON" -c "import secrets; print(secrets.token_urlsafe(48))"
@@ -489,6 +494,15 @@ configure_env() {
         [ -n "$(env_get POSTGRES_PASSWORD)" ] && [ -n "$(env_get MEDIA_SIGNING_SECRET)" ] \
             || stop ".env has no POSTGRES_PASSWORD or MEDIA_SIGNING_SECRET; fix it or re-run with --force"
         case "$(stat -c %a .env 2>/dev/null || echo 600)" in 600|400) ;; *) run chmod 600 .env ;; esac
+        if [ -z "$(env_get LMS_CONTENT_UID)" ]; then
+            if $DRY_RUN; then
+                say "would  add LMS_CONTENT_UID/LMS_CONTENT_GID (owner of $VIDEO_ROOT) to .env"
+            else
+                set_env_var .env LMS_CONTENT_UID "$(content_owner %u)"
+                set_env_var .env LMS_CONTENT_GID "$(content_owner %g)"
+                ok "the API writes content as the owner of $VIDEO_ROOT (uid $(content_owner %u), gid $(content_owner %g))"
+            fi
+        fi
         return 0
     fi
 
@@ -536,6 +550,8 @@ configure_env() {
     set_env_var "$tmp" MEDIA_SIGNING_SECRET "$signing"
     set_env_var "$tmp" VIDEO_ROOT "$VIDEO_ROOT"
     set_env_var "$tmp" MEDIA_BASE_URL "$MEDIA_BASE_URL"
+    set_env_var "$tmp" LMS_CONTENT_UID "$(content_owner %u)"
+    set_env_var "$tmp" LMS_CONTENT_GID "$(content_owner %g)"
     chmod 600 "$tmp"
     mv -f "$tmp" .env
     ok ".env written (mode 600): VIDEO_ROOT=$VIDEO_ROOT MEDIA_BASE_URL='${MEDIA_BASE_URL:-<empty>}', secrets generated"
@@ -732,8 +748,20 @@ demo_and_verify() {
         note "no demo content (--demo generates 5 short test videos and the demo accounts)"
     fi
     if $DRY_RUN; then
+        say "would  offer to create the first dashboard administrator (scripts/lms-admin.sh create-staff)"
         say "would  run scripts/check_stack.sh"
         return 0
+    fi
+    if docker compose exec -T api python -m app.cli list-staff </dev/null 2>/dev/null | grep -q '^0 staff account'; then
+        if [ -t 0 ] && confirm "Create the first staff dashboard administrator now?"; then
+            local admin_user
+            read -r -p "       Username for the administrator [admin]: " admin_user
+            if ! run scripts/lms-admin.sh create-staff --username "${admin_user:-admin}" --name "Administrator" --role admin; then
+                warn "the administrator was not created; run it yourself (see Next steps)"
+            fi
+        else
+            note "no dashboard account yet: create one with scripts/lms-admin.sh create-staff (see Next steps)"
+        fi
     fi
     if run scripts/check_stack.sh; then
         ok "check_stack.sh passed"
@@ -751,6 +779,10 @@ next_steps() {
   Server address for the tablets:    $tablet_url
   Configuration (secrets, mode 600): $DEPLOY_DIR/.env   -- back it up with scripts/backup.sh
   Video library:                     $VIDEO_ROOT   (add lessons: docs/setup-guide.md section 7)
+  Staff dashboard:                   $tablet_url/admin/   (batches, classes, subjects, modules, uploads, students)
+
+  0. If you have no dashboard account yet, create the first administrator (asks for a password):
+       scripts/lms-admin.sh create-staff --username admin --name "Administrator" --role admin
 
   1. Build and install the app (mobile/README.md), e.g.
        flutter build apk --release --dart-define=LMS_SERVER_URL=$tablet_url

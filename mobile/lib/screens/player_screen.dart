@@ -15,17 +15,17 @@ import '../util/format.dart';
 
 enum _Phase { loading, ready, error }
 
-/// Opens the player for a lesson. Returns once the student has left it **and** the
+/// Opens the player for a video. Returns once the student has left it **and** the
 /// final progress save has been sent (or has failed), so the caller's lists show
 /// the new position when they reload.
 Future<void> openLesson(
   BuildContext context, {
-  required String videoId,
+  required String contentId,
   required String title,
   String? subtitle,
 }) async {
   final pending = await Navigator.of(context).push<Future<void>>(
-    MaterialPageRoute(builder: (_) => PlayerScreen(videoId: videoId, title: title, subtitle: subtitle)),
+    MaterialPageRoute(builder: (_) => PlayerScreen(contentId: contentId, title: title, subtitle: subtitle)),
   );
   if (pending != null) {
     try {
@@ -36,12 +36,12 @@ Future<void> openLesson(
   }
 }
 
-/// Plays one lesson (PRD 10.4): asks the API for a signed playback URL, streams
-/// it straight from Nginx, resumes from the saved position and saves progress.
+/// Plays one video (PRD 10.4): asks the API for a signed URL (`POST /contents/{id}/open`),
+/// streams it straight from Nginx, resumes from the saved position and saves progress.
 class PlayerScreen extends StatefulWidget {
-  const PlayerScreen({super.key, required this.videoId, required this.title, this.subtitle});
+  const PlayerScreen({super.key, required this.contentId, required this.title, this.subtitle});
 
-  final String videoId;
+  final String contentId;
   final String title;
   final String? subtitle;
 
@@ -56,7 +56,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
   final _messengerKey = GlobalKey<ScaffoldMessengerState>();
   VideoPlayerController? _controller;
   ProgressReporter? _reporter;
-  PlaybackInfo? _info;
+  ContentAccess? _info;
   _Phase _phase = _Phase.loading;
   String? _error;
   bool _fullScreen = false;
@@ -98,7 +98,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Leaving the app pauses the lesson; the pause listener saves progress.
+    // Leaving the app pauses the video; the pause listener saves progress.
     if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
       _playWhenResumed = false;
       _controller?.pause();
@@ -119,7 +119,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
     await _releasePlayer();
 
     try {
-      final info = await _api.authorizePlayback(widget.videoId);
+      final info = await _api.openContent(widget.contentId);
       if (!mounted || generation != _generation) return;
       _info = info;
       _durationSeconds = info.durationSeconds;
@@ -250,7 +250,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
 
   Future<void> _save(int position, int? duration, bool completed) async {
     await _api.saveProgress(
-      widget.videoId,
+      widget.contentId,
       positionSeconds: position,
       durationSeconds: duration ?? _durationSeconds,
       completed: completed,
@@ -282,7 +282,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
   /// from where playback stopped.
   void _retry() => _start(at: _lastPosition > Duration.zero ? _lastPosition : null);
 
-  /// Back: pause, start the final save, and hand its future to the caller.
+  /// Back: pause, start the final save, and hand its future to the caller ([openLesson]).
   void _leave() {
     _leftViaPop = true;
     _controller?.pause();
@@ -327,7 +327,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WidgetsBindingObserver
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             CircularProgressIndicator(color: Colors.white),
             SizedBox(height: 16),
-            Text('Loading lesson…', style: TextStyle(color: Colors.white)),
+            Text('Loading video…', style: TextStyle(color: Colors.white)),
           ]),
         );
       case _Phase.error:

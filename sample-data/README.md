@@ -1,21 +1,26 @@
 # Sample data
 
-No video files are stored in the repository (`*.mp4` is git-ignored).
+No content files are stored in the repository: video files (`*.mp4`, `*.m4v`) are git-ignored, and the demo notes and image are generated like the videos.
 
-## Demo test videos
+## Demo test files
 
-`deploy/scripts/make_test_videos.sh <VIDEO_ROOT> [--short]` generates the five files the
-demo catalogue (`backend/seed/demo_catalog.json`) expects:
+`deploy/scripts/make_test_videos.sh <VIDEO_ROOT> [--short]` generates the seven files the
+demo catalogue (`backend/seed/demo_catalog.json`) expects, in the same folders the app shows
+(`<batch>/<class>/<subject>/<module>/<NN-name>.<ext>`, all under `batch-2026-27/`):
 
-| Storage key (same layout as `sync-videos`: class/subject/NN-chapter/NN-lesson.mp4) | Length | Seeded as |
+| File under `batch-2026-27/` | What | Seeded as |
 |---|---|---|
-| `class12/computer-science/01-python-basics/01-variables-and-types.mp4` | 3 min | published |
-| `class12/computer-science/01-python-basics/02-python-functions.mp4` | 8 min | published |
-| `class12/computer-science/01-python-basics/03-loops.mp4` | 2 min | draft (must stay invisible) |
-| `class12/mathematics/01-calculus/01-limits-and-continuity.mp4` | 32 min (5 min with `--short`) | published (30-minute test) |
-| `class11/physics/01-motion/01-speed-and-velocity.mp4` | 3 min | published, Class 11 only |
+| `class12/computer-science/01-python-basics/01-variables-and-types.mp4` | video, 3 min | published |
+| `class12/computer-science/01-python-basics/02-python-functions.mp4` | video, 8 min | published |
+| `class12/computer-science/01-python-basics/03-loops.mp4` | video, 2 min | draft (must stay invisible) |
+| `class12/computer-science/01-python-basics/05-python-basics-notes.pdf` | PDF notes, 3 pages | published |
+| `class12/mathematics/01-calculus/01-limits-and-continuity.mp4` | video, 32 min (5 min with `--short`) | published (30-minute test) |
+| `class11/physics/01-motion/01-speed-and-velocity.mp4` | video, 3 min | published, Class 11 only |
+| `class11/physics/01-motion/02-velocity-diagram.png` | image, 1280×720 | published, Class 11 only |
 
-Each is H.264 High + AAC, 1280×720, 30 fps, ~1.2 Mbps, 2-second keyframes, fast-start,
+The PDF is written by `deploy/scripts/make_test_notes.py` (Python standard library only).
+
+Each video is H.264 High + AAC, 1280×720, 30 fps, ~1.2 Mbps, 2-second keyframes, fast-start,
 with the lesson name and a running `hh:mm:ss` timestamp burned in so seek and resume
 accuracy (AC-06, ±10 s) can be checked by eye. Light noise is added so the bitrate is
 closer to real lesson recordings than a plain test pattern would be.

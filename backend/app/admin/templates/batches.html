@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, textarea, flag_badge, counts as count_badges %}
+{% block title %}Content{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Content</h1>
+    <p class="muted">A batch is a group of students for a period (for example an academic year). Each batch has classes, each class has subjects, each subject has modules, and modules hold videos, notes and images.</p>
+  </div>
+  <div class="actions"><a class="btn btn-primary" href="#new-batch">{{ icon('plus') }}<span>New batch</span></a></div>
+</header>
+
+{% if not batches %}
+<div class="empty card">{{ icon('layers') }}<p>No batches yet. Create the first one below.</p></div>
+{% endif %}
+
+<div class="batch-grid">
+{% for batch in batches %}
+  <section class="card batch-card{{ '' if batch.is_active else ' is-off' }}">
+    <header>
+      <a href="/admin/batches/{{ batch.id }}" class="batch-title">{{ icon('layers') }}<span>{{ batch.name }}</span></a>
+      {{ flag_badge(batch.is_active) }}
+    </header>
+    {% if batch.description %}<p class="muted small">{{ batch.description }}</p>{% endif %}
+    {% set classes = classes_by_batch.get(batch.id, []) %}
+    {% if classes %}
+    <ul class="list compact">
+      {% for c in classes %}
+      {% set n = counts.get(c.id, (0, 0, 0, 0)) %}
+      <li><a href="/admin/classes/{{ c.id }}">{{ icon('cap') }}<span class="grow"><b>{{ c.name }}</b><small>{{ plural(students.get(c.id, 0), 'student') }}</small></span>{{ count_badges(*n) }}</a></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted small">No classes yet.</p>
+    {% endif %}
+    <footer><a href="/admin/batches/{{ batch.id }}" class="btn-link">Open {{ icon('right') }}</a></footer>
+  </section>
+{% endfor %}
+</div>
+
+<section class="card" id="new-batch">
+  <h2>{{ icon('plus') }}New batch</h2>
+  <form method="post" action="/admin/batches" class="form-grid">
+    {{ csrf() }}
+    {{ field('name', 'Name', required=True, maxlength=120, placeholder='Batch 2027-28') }}
+    {{ field('folder', 'Folder name', maxlength=100, hint='Optional. Made from the name if empty (e.g. batch-2027-28). It cannot be changed later.', pattern='[A-Za-z0-9][A-Za-z0-9._-]*') }}
+    {{ textarea('description', 'Description', rows=2) }}
+    <div class="form-actions"><button class="btn btn-primary" type="submit">{{ icon('plus') }}<span>Create batch</span></button></div>
+  </form>
+</section>
+{% endblock %}

@@ -60,7 +60,9 @@ section "Video storage"
 VIDEO_ROOT="$(env_get VIDEO_ROOT)"
 if [ -n "$VIDEO_ROOT" ] && [ -d "$VIDEO_ROOT" ]; then
     echo "VIDEO_ROOT=$VIDEO_ROOT"
-    echo "MP4 files: $(find "$VIDEO_ROOT" -type f \( -name '*.mp4' -o -name '*.m4v' \) | wc -l)"
+    content_files="$(find "$VIDEO_ROOT" -path "$VIDEO_ROOT/.*" -prune -o -type f \( -iname '*.mp4' -o -iname '*.m4v' \
+        -o -iname '*.pdf' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) -print | wc -l)"
+    echo "Content files (videos, notes, images): $content_files"
     df -h "$VIDEO_ROOT" | tail -1
 else
     fail "VIDEO_ROOT '$VIDEO_ROOT' is not a directory on this host"

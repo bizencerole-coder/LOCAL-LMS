@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, type_icon, status_badge, csrf, checkbox %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Hello, {{ staff.full_name.split(' ')[0] }}</h1>
+    <p class="muted">Everything the tablets show comes from here: Batch › Class › Subject › Module › Content.</p>
+  </div>
+  <div class="actions">
+    <a class="btn btn-primary" href="/admin/batches">{{ icon('layers') }}<span>Manage content</span></a>
+    <a class="btn" href="/admin/students">{{ icon('users') }}<span>Students</span></a>
+  </div>
+</header>
+
+{% include "_write_warning.html" %}
+
+<section class="stats">
+  <a class="stat" href="/admin/batches"><span class="stat-icon">{{ icon('layers') }}</span><span><b>{{ stats.batches }}</b>Active batches</span></a>
+  <a class="stat" href="/admin/batches"><span class="stat-icon">{{ icon('cap') }}</span><span><b>{{ stats.classes }}</b>Classes</span></a>
+  <a class="stat" href="/admin/students"><span class="stat-icon">{{ icon('users') }}</span><span><b>{{ stats.students }}</b>Active students</span></a>
+  <div class="stat"><span class="stat-icon type-video">{{ icon('video') }}</span><span><b>{{ stats.videos }}</b>Videos</span></div>
+  <div class="stat"><span class="stat-icon type-pdf">{{ icon('file') }}</span><span><b>{{ stats.notes }}</b>Notes (PDF)</span></div>
+  <div class="stat"><span class="stat-icon type-image">{{ icon('image') }}</span><span><b>{{ stats.images }}</b>Images</span></div>
+</section>
+
+<div class="grid-2">
+  <section class="card">
+    <h2>{{ icon('hdd') }}Storage</h2>
+    {% if usage %}
+    <progress class="meter" max="100" value="{{ '%.1f' % usage.percent_used }}" title="{{ '%.0f' % usage.percent_used }}% used"></progress>
+    <p class="meter-legend"><span>{{ usage.free | size }} free of {{ usage.total | size }}</span><span class="muted">Lessons use {{ content_bytes | size }}</span></p>
+    {% else %}
+    <p class="warn">{{ icon('alert') }}The content folder is not available on the server.</p>
+    {% endif %}
+    {% if stats.drafts %}
+    <p class="note">{{ icon('eye-off') }}<span>{{ plural(stats.drafts, 'draft') }} not visible to students yet. Open a module to publish them.</span></p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>{{ icon('sync') }}Folder sync</h2>
+    {% if last_sync %}
+    <p><b>Last run {{ last_sync.started_at | ago }}</b> <span class="muted">({{ 'from the dashboard' if last_sync.trigger == 'dashboard' else 'automatic / command line' }})</span></p>
+    <p class="muted small">{{ last_sync.registered }} added · {{ last_sync.moved }} moved · {{ last_sync.updated }} updated · {{ last_sync.archived }} archived{% if last_sync.problems %} · <span class="warn-text">{{ last_sync.problems }} problem(s)</span>{% endif %}{% if last_sync.skipped %} · {{ last_sync.skipped }} skipped{% endif %}</p>
+    {% else %}
+    <p class="muted">Not run yet.</p>
+    {% endif %}
+    <form method="post" action="/admin/sync" class="row-form">
+      {{ csrf() }}
+      <input type="hidden" name="publish" value="1"><input type="hidden" name="archive_missing" value="1">
+      <button class="btn" type="submit">{{ icon('sync') }}<span>Sync now</span></button>
+      <a href="/admin/sync" class="btn-link">Details</a>
+    </form>
+    <p class="hint">Files copied into the share appear here within 5 minutes, or straight away with Sync now.</p>
+  </section>
+</div>
+
+<div class="grid-2">
+  <section class="card">
+    <h2>{{ icon('upload') }}Recently added</h2>
+    {% if recent %}
+    <ul class="list">
+      {% for row in recent %}
+      <li><a href="/admin/contents/{{ row.content.id }}">{{ type_icon(row.content.content_type) }}<span class="grow"><b>{{ row.content.title }}</b><small>{{ row.where }}</small></span>{{ status_badge(row.content.status) }}</a></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No content yet. Create a batch, then add classes, subjects and modules, and upload files into a module.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>{{ icon('clock') }}Student activity</h2>
+    {% if activity %}
+    <ul class="list">
+      {% for progress, name, student_id, title, kind, content_id in activity %}
+      <li><a href="/admin/students/{{ student_id }}">{{ type_icon(kind) }}<span class="grow"><b>{{ name }}</b><small>{{ title }}{% if kind == 'video' %} · {{ 'completed' if progress.is_completed else 'at ' ~ (progress.position_seconds | duration or '0:00') }}{% else %} · opened{% endif %}</small></span><span class="muted small">{{ progress.last_watched_at | ago }}</span></a></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No student has opened anything yet.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

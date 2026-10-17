@@ -81,18 +81,24 @@ def login(base, username, password):
     return status, body.get("access_token"), ms
 
 
-def first_video(base, token):
+def first_items(base, token):
+    """The first published video, and the first notes (PDF) item if there is one."""
     status, _, payload, _ = request("GET", f"{base}/api/v1/subjects", token=token)
     subjects = json_body(payload) if status == 200 else None
     check(status == 200 and isinstance(subjects, list) and subjects, "list subjects", f"status {status}")
+    video = notes = None
     for subject in subjects or []:
-        _, _, payload, _ = request("GET", f"{base}/api/v1/subjects/{subject['id']}/chapters", token=token)
-        for chapter in json_body(payload) or []:
-            _, _, payload, _ = request("GET", f"{base}/api/v1/chapters/{chapter['id']}/videos", token=token)
-            videos = json_body(payload) or []
-            if videos:
-                return subject, chapter, videos[0]
-    return None, None, None
+        _, _, payload, _ = request("GET", f"{base}/api/v1/subjects/{subject['id']}/modules", token=token)
+        for module in json_body(payload) or []:
+            _, _, payload, _ = request("GET", f"{base}/api/v1/modules/{module['id']}/contents", token=token)
+            for item in json_body(payload) or []:
+                if item.get("type") == "video" and video is None:
+                    video = dict(item, subject_id=subject["id"])
+                if item.get("type") == "pdf" and notes is None:
+                    notes = item
+            if video and notes:
+                return video, notes
+    return video, notes
 
 
 def main() -> int:
@@ -125,13 +131,21 @@ def main() -> int:
     me = json_body(payload) or {}
     check(status == 200, "GET /me", f"{me.get('full_name')} / {(me.get('class') or {}).get('name')}")
 
+    # --- Staff dashboard ----------------------------------------------------------
+    status, _, payload, _ = request("GET", f"{base}/admin/login")
+    check(status == 200 and b"Campus LMS" in payload, "dashboard sign-in page", f"status {status}")
+    status, headers, _, _ = request("GET", f"{base}/admin/")
+    location = {k.lower(): v for k, v in headers.items()}.get("location", "")
+    check(status in (302, 303) and "/admin/login" in location, "dashboard needs a staff sign-in",
+          f"status {status} -> {location}")
+
     # --- Catalogue and playback authorization -----------------------------------
-    subject, chapter, video = first_video(base, token)
-    if not check(video is not None, "found a published lesson", video["title"] if video else "none"):
+    video, notes = first_items(base, token)
+    if not check(video is not None, "found a published video", video["title"] if video else "none"):
         return summary()
-    status, _, payload, ms = request("POST", f"{base}/api/v1/videos/{video['id']}/playback", token=token)
+    status, _, payload, ms = request("POST", f"{base}/api/v1/contents/{video['id']}/open", token=token)
     playback = json_body(payload) or {}
-    url = playback.get("playback_url", "")
+    url = playback.get("url", "")
     if not check(status == 200 and url, "playback authorized", f"{ms:.0f} ms"):
         return summary()
     host = urlsplit(url).hostname or ""
@@ -173,25 +187,42 @@ def main() -> int:
     check(status == 405, "non-GET method on media denied", f"status {status}")
     for path in ("/media/", parts.path.rsplit("/", 1)[0] + "/", "/"):
         status, _, payload, _ = request("GET", f"{base}{path}")
-        check(status in (403, 404) and b"Index of" not in payload, f"no directory listing at {path}", f"status {status}")
+        # "/" sends browsers to the staff dashboard (303); nothing else is listed.
+        allowed = (303, 403, 404) if path == "/" else (403, 404)
+        check(status in allowed and b"Index of" not in payload, f"no directory listing at {path}", f"status {status}")
     status, _, _, _ = request("GET", f"{base}/media/../etc/passwd")
     check(status in (400, 403, 404), "path traversal blocked", f"status {status}")
+
+    # --- Notes (PDF) delivery --------------------------------------------------
+    if notes is not None:
+        status, _, payload, _ = request("POST", f"{base}/api/v1/contents/{notes['id']}/open", token=token)
+        notes_url = (json_body(payload) or {}).get("url", "")
+        status, headers, _, _ = request("HEAD", notes_url) if notes_url else (status, {}, b"", 0)
+        check(status == 200 and headers.get("Content-Type", "").startswith("application/pdf"),
+              "notes (PDF) delivered", f"{notes['title']}: {status} {headers.get('Content-Type', '')}")
 
     # --- Progress (AC-09, T-18) -------------------------------------------------
     for position in (41, 42):
         status, _, _, _ = request(
-            "PUT", f"{base}/api/v1/videos/{video['id']}/progress", token=token,
+            "PUT", f"{base}/api/v1/contents/{video['id']}/progress", token=token,
             body={"position_seconds": position, "duration_seconds": playback.get("duration_seconds")},
         )
     check(status == 200, "save progress", f"status {status}")
-    status, _, payload, _ = request("GET", f"{base}/api/v1/videos/{video['id']}/progress", token=token)
+    status, _, payload, _ = request("GET", f"{base}/api/v1/contents/{video['id']}/progress", token=token)
     check((json_body(payload) or {}).get("position_seconds") == 42, "read progress back", payload.decode(errors="replace"))
+
+    # --- Older app versions (chapters/videos endpoints) still work --------------
+    status, _, payload, _ = request("GET", f"{base}/api/v1/subjects/{video['subject_id']}/chapters", token=token)
+    chapters = json_body(payload) or []
+    status_old, _, payload_old, _ = request("POST", f"{base}/api/v1/videos/{video['id']}/playback", token=token)
+    check(status == 200 and chapters and status_old == 200 and "playback_url" in (json_body(payload_old) or {}),
+          "API for app 1.0.x still works", f"chapters {status}, playback {status_old}")
 
     # --- Another class cannot get this lesson (AC-07, T-11) ---------------------
     if args.other_class_username:
         status, other_token, _ = login(base, args.other_class_username, password)
         if check(status == 200, f"login as {args.other_class_username}", f"status {status}"):
-            status, _, _, _ = request("POST", f"{base}/api/v1/videos/{video['id']}/playback", token=other_token)
+            status, _, _, _ = request("POST", f"{base}/api/v1/contents/{video['id']}/open", token=other_token)
             check(status == 404, "other class denied playback", f"status {status}")
             request("POST", f"{base}/api/v1/auth/logout", token=other_token)
 

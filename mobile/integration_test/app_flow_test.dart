@@ -7,7 +7,8 @@
 //     --dart-define=LMS_SERVER_URL=http://10.0.2.2:8080 \
 //     --dart-define=LMS_TEST_PASSWORD=<demo password> [--dart-define=LMS_TEST_USERNAME=e2e.student --dart-define=LMS_TEST_FULL_NAME="E2E Test Student"]
 //
-// Covers PRD AC-01/02/03/05/06/09 and T-01, T-02, T-04, T-05, T-06, T-07, T-09, T-10.
+// Covers PRD AC-01/02/03/05/06/09 and T-01, T-02, T-04, T-05, T-06, T-07, T-09, T-10, browsing
+// Subjects → Modules → Content, and the notes (PDF) viewer.
 
 import 'package:campus_lms/app.dart';
 import 'package:campus_lms/player/player_view.dart';
@@ -84,9 +85,10 @@ Future<void> systemBack(WidgetTester tester) async {
   await pumpFor(tester, const Duration(milliseconds: 600));
 }
 
-/// Opens a lesson and waits until it is playing past [minSeconds].
+/// Opens a video and waits until it is playing past [minSeconds].
 Future<VideoPlayerController> openAndWaitForPlayback(WidgetTester tester, String lesson,
     {int minSeconds = 2}) async {
+  await tester.ensureVisible(find.text(lesson).first); // module lists build every item
   await tapText(tester, lesson);
   late VideoPlayerController controller;
   await pumpUntil(tester, () {
@@ -142,7 +144,8 @@ void main() {
     await pumpUntil(tester, () => find.textContaining('Hello, $_fullName').evaluate().isNotEmpty,
         reason: 'home screen');
 
-    // --- Browsing (T-04, T-05): own class only, draft lesson hidden ---------------
+    // --- Browsing (T-04, T-05): own class only, draft video hidden ----------------
+    // Subjects → Computer Science → module Python Basics → its videos and notes.
     Finder subject(String name) => find.descendant(of: find.byType(GridView), matching: find.text(name));
     await pumpUntil(tester, () => subject('Computer Science').evaluate().isNotEmpty, reason: 'subjects');
     expect(subject('Mathematics'), findsOneWidget);
@@ -150,10 +153,11 @@ void main() {
 
     await tester.tap(subject('Computer Science'));
     await tester.pump();
-    await tapText(tester, 'Python Basics');
+    await tapText(tester, 'Python Basics'); // the module, on the subject's list of modules
     await pumpUntil(tester, () => find.text('Lesson 2: Python Functions').evaluate().isNotEmpty,
-        reason: 'lesson list');
+        reason: 'module contents');
     expect(find.text('Lesson 1: Variables and Types'), findsOneWidget);
+    expect(find.text('Python Basics: Notes'), findsOneWidget);
     expect(find.textContaining('Lesson 3'), findsNothing);
 
     // --- Playback, seek, pause (T-06, T-07, T-09, AC-05) -------------------------
@@ -190,7 +194,7 @@ void main() {
     // --- Leave and reopen: resume within ±10 s (T-10, AC-06, AC-09) -------------
     await systemBack(tester);
     await pumpUntil(tester, () => find.textContaining('Resume at').evaluate().isNotEmpty,
-        reason: 'lesson list to show the saved position');
+        reason: 'module contents to show the saved position');
 
     controller = await openAndWaitForPlayback(tester, 'Lesson 2: Python Functions', minSeconds: 1);
     expect(find.textContaining('Resuming from'), findsOneWidget);
@@ -202,9 +206,19 @@ void main() {
     await pumpFor(tester, const Duration(seconds: 1));
     await systemBack(tester);
     await pumpUntil(tester, () => find.text('Lesson 1: Variables and Types').evaluate().isNotEmpty,
-        reason: 'back on lessons');
+        reason: 'back on the module contents');
+
+    // --- Notes (PDF) in the same module: downloaded, rendered on the device -------
+    await tester.ensureVisible(find.text('Python Basics: Notes').first);
+    await tapText(tester, 'Python Basics: Notes');
+    await pumpUntil(tester, () => find.textContaining('Page 1 of').evaluate().isNotEmpty,
+        timeout: const Duration(seconds: 90), reason: 'notes viewer page indicator');
     await systemBack(tester);
-    await pumpUntil(tester, () => find.text('Python Basics').evaluate().isNotEmpty, reason: 'chapters');
+    await pumpUntil(tester, () => find.text('Opened').evaluate().isNotEmpty,
+        reason: 'module contents to show the notes as opened');
+
+    await systemBack(tester);
+    await pumpUntil(tester, () => find.text('Python Basics').evaluate().isNotEmpty, reason: 'modules');
     await systemBack(tester);
 
     // --- Continue Watching and My Learning ------------------------------------
@@ -213,6 +227,7 @@ void main() {
     await tapText(tester, 'My Learning');
     await pumpUntil(tester, () => find.text('Lesson 2: Python Functions').evaluate().isNotEmpty,
         reason: 'My Learning list');
+    expect(find.text('Python Basics: Notes'), findsOneWidget, reason: 'opened notes are in My Learning too');
 
     // --- Sign out ---------------------------------------------------------------
     await tester.tap(find.byTooltip('Account'));

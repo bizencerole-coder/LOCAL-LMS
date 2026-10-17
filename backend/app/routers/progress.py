@@ -1,4 +1,4 @@
-"""Playback progress (FR-07). Identity comes from the session, never the body."""
+"""Progress (FR-07). Identity comes from the session, never the body."""
 
 from __future__ import annotations
 
@@ -8,29 +8,30 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from ..access import visible_videos
+from ..access import visible_contents
 from ..config import Settings, get_settings
 from ..db import get_db
 from ..deps import get_student
 from ..errors import ApiError
-from ..models import Student, StudentVideoProgress, Video, utcnow
-from ..schemas import ProgressOut, ProgressUpdate
+from ..models import Content, ContentProgress, ContentType, Student, utcnow
+from ..schemas import ContentProgressOut, ProgressOut, ProgressUpdate
 
 router = APIRouter(prefix="/api/v1", tags=["progress"])
 
 
-def _visible_video_or_404(db: Session, student: Student, video_id: uuid.UUID) -> Video:
-    video = db.scalar(visible_videos(student).where(Video.id == video_id))
-    if video is None:
-        raise ApiError(404, "not_found", "This lesson is not available.")
-    return video
+def _visible_or_404(db: Session, student: Student, content_id: uuid.UUID, video_only: bool = False) -> Content:
+    stmt = visible_contents(student, content_type=ContentType.VIDEO.value if video_only else None)
+    content = db.scalar(stmt.where(Content.id == content_id))
+    if content is None:
+        raise ApiError(404, "not_found", "This item is not available.")
+    return content
 
 
-def _get_progress(db: Session, student_id: uuid.UUID, video_id: uuid.UUID):
+def _get_progress(db: Session, student_id: uuid.UUID, content_id: uuid.UUID) -> ContentProgress | None:
     return db.scalar(
-        select(StudentVideoProgress).where(
-            StudentVideoProgress.student_id == student_id,
-            StudentVideoProgress.video_id == video_id,
+        select(ContentProgress).where(
+            ContentProgress.student_id == student_id,
+            ContentProgress.content_id == content_id,
         )
     )
 
@@ -46,38 +47,52 @@ def _insert_for(db: Session):
     return insert
 
 
-@router.get("/videos/{video_id}/progress", response_model=ProgressOut)
-def get_progress(
-    video_id: uuid.UUID,
-    student: Student = Depends(get_student),
-    db: Session = Depends(get_db),
-) -> ProgressOut:
-    video = _visible_video_or_404(db, student, video_id)
-    progress = _get_progress(db, student.id, video.id)
-    if progress is None:
-        return ProgressOut(
-            video_id=video.id,
-            position_seconds=0,
-            duration_seconds=video.duration_seconds,
-            is_completed=False,
-            last_watched_at=None,
-        )
-    return ProgressOut.model_validate(progress, from_attributes=True)
+def upsert_progress(
+    db: Session,
+    student: Student,
+    content: Content,
+    *,
+    position: int,
+    duration: int | None,
+    completed: bool,
+) -> ContentProgress:
+    """Insert or update one student's progress row; completion is permanent.
 
-
-@router.put("/videos/{video_id}/progress", response_model=ProgressOut)
-def save_progress(
-    video_id: uuid.UUID,
-    body: ProgressUpdate,
-    student: Student = Depends(get_student),
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-) -> ProgressOut:
-    video = _visible_video_or_404(db, student, video_id)
-
-    duration = video.duration_seconds or (
-        int(body.duration_seconds) if body.duration_seconds else None
+    The caller commits.
+    """
+    now = utcnow()
+    insert = _insert_for(db)
+    stmt = insert(ContentProgress).values(
+        id=uuid.uuid4(),
+        student_id=student.id,
+        content_id=content.id,
+        position_seconds=position,
+        duration_seconds=duration,
+        is_completed=completed,
+        completed_at=now if completed else None,
+        last_watched_at=now,
     )
+    # Upsert on (student, content): retries never create duplicate rows (T-18), and an
+    # item stays completed once completed.
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[ContentProgress.student_id, ContentProgress.content_id],
+        set_={
+            "position_seconds": stmt.excluded.position_seconds,
+            "duration_seconds": stmt.excluded.duration_seconds,
+            "is_completed": or_(ContentProgress.is_completed, stmt.excluded.is_completed),
+            "completed_at": func.coalesce(ContentProgress.completed_at, stmt.excluded.completed_at),
+            "last_watched_at": stmt.excluded.last_watched_at,
+        },
+    )
+    # RETURNING gives this request's own result. A separate read after the commit could
+    # return a concurrent request's position, and would hold the connection longer.
+    return db.scalars(
+        stmt.returning(ContentProgress), execution_options={"populate_existing": True}
+    ).one()
+
+
+def _save(db: Session, student: Student, content: Content, body: ProgressUpdate, settings: Settings) -> ContentProgress:
+    duration = content.duration_seconds or (int(body.duration_seconds) if body.duration_seconds else None)
     position = int(body.position_seconds)
     if duration:
         position = min(position, duration)
@@ -86,40 +101,89 @@ def save_progress(
         and duration
         and position >= settings.completion_threshold * duration
     )
-    completed = body.is_completed or reached_threshold
-    now = utcnow()
-
-    insert = _insert_for(db)
-    stmt = insert(StudentVideoProgress).values(
-        id=uuid.uuid4(),
-        student_id=student.id,
-        video_id=video.id,
-        position_seconds=position,
-        duration_seconds=duration,
-        is_completed=completed,
-        completed_at=now if completed else None,
-        last_watched_at=now,
+    progress = upsert_progress(
+        db,
+        student,
+        content,
+        position=position,
+        duration=duration,
+        completed=body.is_completed or reached_threshold,
     )
-    # Upsert on (student, video): retries never create duplicate rows (T-18), and a
-    # lesson stays completed once completed.
-    stmt = stmt.on_conflict_do_update(
-        index_elements=[StudentVideoProgress.student_id, StudentVideoProgress.video_id],
-        set_={
-            "position_seconds": stmt.excluded.position_seconds,
-            "duration_seconds": stmt.excluded.duration_seconds,
-            "is_completed": or_(
-                StudentVideoProgress.is_completed, stmt.excluded.is_completed
-            ),
-            "completed_at": func.coalesce(
-                StudentVideoProgress.completed_at, stmt.excluded.completed_at
-            ),
-            "last_watched_at": stmt.excluded.last_watched_at,
-        },
-    )
-    # RETURNING gives this request's own result. A separate read after the commit could
-    # return a concurrent request's position, and would hold the connection longer.
-    progress = db.scalars(
-        stmt.returning(StudentVideoProgress), execution_options={"populate_existing": True}
-    ).one()
     db.commit()
-    return ProgressOut.model_validate(progress, from_attributes=True)
+    return progress
+
+
+def _empty(content_id: uuid.UUID, duration: int | None) -> dict:
+    return {
+        "position_seconds": 0,
+        "duration_seconds": duration,
+        "is_completed": False,
+        "last_watched_at": None,
+        "content_id": content_id,
+    }
+
+
+@router.get("/contents/{content_id}/progress", response_model=ContentProgressOut)
+def get_content_progress(
+    content_id: uuid.UUID,
+    student: Student = Depends(get_student),
+    db: Session = Depends(get_db),
+) -> ContentProgressOut:
+    content = _visible_or_404(db, student, content_id)
+    progress = _get_progress(db, student.id, content.id)
+    if progress is None:
+        return ContentProgressOut(**_empty(content.id, content.duration_seconds))
+    return ContentProgressOut.model_validate(progress, from_attributes=True)
+
+
+@router.put("/contents/{content_id}/progress", response_model=ContentProgressOut)
+def save_content_progress(
+    content_id: uuid.UUID,
+    body: ProgressUpdate,
+    student: Student = Depends(get_student),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ContentProgressOut:
+    content = _visible_or_404(db, student, content_id)
+    progress = _save(db, student, content, body, settings)
+    return ContentProgressOut.model_validate(progress, from_attributes=True)
+
+
+# --------------------------------------------------------------- legacy (app <= 1.0.x)
+
+
+def _legacy(progress: ContentProgress) -> ProgressOut:
+    return ProgressOut(
+        video_id=progress.content_id,
+        position_seconds=progress.position_seconds,
+        duration_seconds=progress.duration_seconds,
+        is_completed=progress.is_completed,
+        last_watched_at=progress.last_watched_at,
+    )
+
+
+@router.get("/videos/{video_id}/progress", response_model=ProgressOut, deprecated=True)
+def get_progress(
+    video_id: uuid.UUID,
+    student: Student = Depends(get_student),
+    db: Session = Depends(get_db),
+) -> ProgressOut:
+    video = _visible_or_404(db, student, video_id, video_only=True)
+    progress = _get_progress(db, student.id, video.id)
+    if progress is None:
+        empty = _empty(video.id, video.duration_seconds)
+        empty["video_id"] = empty.pop("content_id")
+        return ProgressOut(**empty)
+    return _legacy(progress)
+
+
+@router.put("/videos/{video_id}/progress", response_model=ProgressOut, deprecated=True)
+def save_progress(
+    video_id: uuid.UUID,
+    body: ProgressUpdate,
+    student: Student = Depends(get_student),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ProgressOut:
+    video = _visible_or_404(db, student, video_id, video_only=True)
+    return _legacy(_save(db, student, video, body, settings))

@@ -1,29 +1,34 @@
 # Campus LMS — framed prototype
 
-Local campus video-learning platform: students on Android tablets sign in, browse
-their class's subjects → chapters → lessons, and stream recorded lessons from a
-server on the campus LAN. Nothing in the core path needs the public internet.
+Local campus learning platform. Staff organise content in a web dashboard as
+**Batch › Class › Subject › Module › Content** (videos, PDF notes, images); students on
+Android tablets sign in, see their class's subjects and modules, stream recorded lessons and
+read notes from a server on the campus LAN. Nothing in the core path needs the public internet.
 
 Requirements: [docs/PRD.md](docs/PRD.md) (v1.0, 15 Oct 2026).
 
 ```
-Tablet (Flutter)  ──HTTP──▶  Nginx :80 ──▶ /api/*   ──▶ FastAPI ──▶ PostgreSQL
-                                     └──▶ /media/* ──▶ MP4 files (VIDEO_ROOT, read-only)
+Tablet (Flutter)  ──HTTP──▶  Nginx :80 ──▶ /api/*    ──▶ FastAPI ──▶ PostgreSQL
+Staff browser     ──HTTP──▶            ──▶ /admin/*  ──┘    │
+                                       └──▶ /media/* ──▶ VIDEO_ROOT ◀── uploads, folder sync
+Staff PC (SMB share) ──────────────────────────────────────┘    <batch>/<class>/<subject>/<module>/
 ```
 
-The API authorizes a lesson and returns a short-lived **signed URL**; the player then
-streams the MP4 directly from Nginx (HTTP Range/206 for seeking). Video bytes never pass
-through the API. See [docs/architecture.md](docs/architecture.md).
+The API authorizes an item and returns a short-lived **signed URL**; the tablet then
+streams the video (HTTP Range/206 for seeking) or downloads the notes directly from Nginx.
+File bytes never pass through the API. The folders under `VIDEO_ROOT` mirror the catalogue,
+so staff can upload in the dashboard or copy files into the network share; a sync every
+5 minutes keeps both in step. See [docs/architecture.md](docs/architecture.md).
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
-| `backend/` | FastAPI app (`app/`), Alembic migrations, admin CLI, demo seed manifest, tests |
-| `mobile/` | Flutter Android app (student UI and player) |
+| `backend/` | FastAPI app (`app/`: student API, staff dashboard in `app/admin/`, folder sync), Alembic migrations, admin CLI, demo seed manifest, tests |
+| `mobile/` | Flutter Android app (student UI, video player, notes and image viewers) |
 | `deploy/` | `compose.yaml`, `.env.example`, Nginx config, `install.sh`, `scripts/set_network.sh` (site move), operator scripts |
 | `docs/` | PRD, setup, architecture, API, testing, troubleshooting, backup/restore, M0 inventory |
-| `sample-data/` | How the demo test videos are generated |
+| `sample-data/` | How the demo test files are generated |
 
 ## Quick install (fresh Linux host)
 
@@ -47,13 +52,15 @@ cp .env.example .env            # set POSTGRES_PASSWORD, MEDIA_SIGNING_SECRET, V
 scripts/make_test_videos.sh "$(grep ^VIDEO_ROOT= .env | cut -d= -f2)" --short
 docker compose up -d --build
 scripts/seed_demo_data.sh        # prompts for the demo students' password
+scripts/lms-admin.sh create-staff --username admin --name "Administrator" --role admin   # dashboard account
 scripts/check_stack.sh           # every layer, with the address Nginx publishes
 LMS_SMOKE_PASSWORD='<that password>' python3 scripts/smoke_test.py \
     --base-url http://127.0.0.1 --other-class-username demo.class11   # add :<LMS_HTTP_PORT> if not 80
 ```
 
-Then install the app on a tablet ([mobile/README.md](mobile/README.md)), set the server
-address on the sign-in screen, and sign in as `demo.student`.
+Then open `http://<server>/admin/` in a browser to manage content and students, install the
+app on a tablet ([mobile/README.md](mobile/README.md)), set the server address on the
+sign-in screen, and sign in as `demo.student`.
 
 Full instructions, including OMV integration and the WAN-disconnect test:
 [docs/setup-guide.md](docs/setup-guide.md).
@@ -73,14 +80,17 @@ Full instructions, including OMV integration and the WAN-disconnect test:
 
 ## Status against the PRD
 
-Implemented in this repository (M1–M4 software): local login with argon2 hashes and
-revocable sessions; class-scoped catalogue; signed, expiring Nginx playback URLs with Range
-support; progress upsert with configurable completion; health/readiness endpoints;
-request-ID logging; admin CLI (classes, subjects, chapters, students, video import,
-folder sync that builds the catalogue from `class/subject/chapter/lesson.mp4`,
-publish/unpublish, media checks); Flutter app with login, home, Continue Watching,
-My Learning, chapters, lessons, and a player with seek, ±10 s, speed, full-screen,
-resume and retry.
+Implemented in this repository (M1–M4 software, plus the staff dashboard of §20 F3): local
+login with argon2 hashes and revocable sessions; batch › class › subject › module › content
+catalogue scoped to the student's class; videos, PDF notes and images behind signed,
+expiring Nginx URLs with Range support; progress upsert with configurable completion;
+health/readiness endpoints; request-ID logging; a staff web dashboard (content tree with
+uploads, publish/unpublish/archive, moves and deletes that keep the folders in step,
+students with CSV import, staff accounts with admin/staff roles, folder-sync reports);
+a folder sync that builds and follows the catalogue from `batch/class/subject/module/file`;
+an admin CLI with the same operations; and the Flutter app with login, home (subjects with
+progress, Continue Watching), My Learning, subject and module pages, a player with seek,
+±10 s, speed, full-screen, resume and retry, and notes/image viewers.
 
 Verified on the development machine (Docker stack, smoke test, emulator end-to-end run,
 backup/restore): [docs/test-report-2026-10-16.md](docs/test-report-2026-10-16.md).

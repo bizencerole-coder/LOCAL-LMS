@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field %}
+{% block title %}Your account{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Your account</h1>
+    <p class="muted"><code>{{ staff.username }}</code> · {{ 'Administrator' if staff.is_admin else 'Staff' }}</p>
+  </div>
+</header>
+<section class="card narrow-card">
+  <h2>{{ icon('key') }}Change password</h2>
+  <form method="post" action="/admin/account/password">
+    {{ csrf() }}
+    {{ field('current_password', 'Current password', type='password', required=True, autocomplete='current-password') }}
+    {{ field('password', 'New password', type='password', required=True, hint='At least 8 characters.', autocomplete='new-password') }}
+    {{ field('password_confirm', 'Repeat new password', type='password', required=True, autocomplete='new-password') }}
+    <button class="btn btn-primary" type="submit">{{ icon('check') }}<span>Change password</span></button>
+  </form>
+</section>
+{% endblock %}

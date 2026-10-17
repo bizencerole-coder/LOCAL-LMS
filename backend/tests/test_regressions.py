@@ -95,7 +95,8 @@ def test_quicktime_data_handler_does_not_hide_the_video_track(tmp_path):
 def test_seed_demo_rerun_with_untrimmed_names(db, tmp_path, monkeypatch):
     manifest = tmp_path / "m.json"
     manifest.write_text(json.dumps({
-        "classes": [{"name": " Padded Class ", "subjects": [{"name": " CS ", "chapters": [{"title": " Intro "}]}]}],
+        "batches": [{"name": " Padded Batch ", "classes": [
+            {"name": " Padded Class ", "subjects": [{"name": " CS ", "modules": [{"title": " Intro "}]}]}]}],
     }))
     args = argparse.Namespace(manifest=str(manifest), password_env=None, password_stdin=False)
     cli.cmd_seed_demo(db, args)

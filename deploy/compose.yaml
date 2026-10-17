@@ -53,10 +53,17 @@ services:
       ENABLE_API_DOCS: ${ENABLE_API_DOCS:-true}
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
       MIGRATE_ON_START: ${MIGRATE_ON_START:-true}
+      STAFF_SESSION_TTL_SECONDS: ${STAFF_SESSION_TTL_SECONDS:-43200}
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-8589934592}
+      CONTENT_SHARE_PATH: ${CONTENT_SHARE_PATH:-}
+      DISPLAY_TIMEZONE: ${DISPLAY_TIMEZONE:-Asia/Kolkata}
     volumes:
-      - ${VIDEO_ROOT:?Set VIDEO_ROOT in deploy/.env}:/srv/campus-lms/videos:ro
-    # Runs as a non-root user with no capabilities and a read-only image.
-    user: lms
+      # Writable: the staff dashboard uploads, moves and deletes content files here.
+      - ${VIDEO_ROOT:?Set VIDEO_ROOT in deploy/.env}:/srv/campus-lms/videos
+    # Runs as the owner of the content folder (the user the network share writes as), so
+    # files from the dashboard and from the share can be edited by both. No root, no
+    # capabilities, read-only image.
+    user: "${LMS_CONTENT_UID:-1000}:${LMS_CONTENT_GID:-1000}"
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]

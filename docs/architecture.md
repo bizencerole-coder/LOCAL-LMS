@@ -4,12 +4,16 @@
 
 ```
                     campus LAN / Wi-Fi (no WAN needed)
- ┌──────────────┐        ┌──────────────────── LMS host ─────────────────────┐
- │ Android      │  HTTP  │  Nginx :80                                        │
+ ┌──────────────┐        ┌──────────────────── LMS host ─────────────────────────┐
+ │ Android      │  HTTP  │  Nginx :80                                            │
  │ tablet       ├───────▶│   /api/*, /health, /ready ──▶ FastAPI :8000 ──▶ PostgreSQL
- │ (Flutter +   │        │   /media/* (signed) ──▶ VIDEO_ROOT (read-only)    │   (internal network,
- │  ExoPlayer)  │        │   everything else ──▶ 404                         │    no published port)
- └──────────────┘        └───────────────────────────────────────────────────┘
+ │ (Flutter)    │        │   /admin/* (staff dashboard) ─┘     │      (internal network,
+ └──────────────┘        │   /media/* (signed) ──▶ VIDEO_ROOT   │       no published port)
+ ┌──────────────┐  HTTP  │   everything else ──▶ 404       ▲  ▲ │
+ │ Staff PC     ├───────▶│                                 │  └─┴── API writes: uploads,
+ │ (browser,    │  SMB   │  OMV Samba share ───────────────┘        moves, deletes; sync
+ │  file share) ├───────▶│                                                       │
+ └──────────────┘        └───────────────────────────────────────────────────────┘
 ```
 
 | Component | Choice | Notes |
@@ -17,8 +21,9 @@
 | App | Flutter, Android only | `video_player` (Android Media3/ExoPlayer). No Firebase, analytics, remote fonts or internet checks |
 | API | FastAPI + SQLAlchemy 2 + Alembic | Sync endpoints in a thread pool; 2 Uvicorn workers by default |
 | Database | PostgreSQL 17 | Docker volume `pgdata`; only reachable on the Compose network |
-| Video | Nginx static files | `secure_link` signed URLs; Range/206 native; no transcoding |
-| Storage | `VIDEO_ROOT` host folder (OMV shared folder or plain disk) | Mounted read-only into Nginx and the API |
+| Staff dashboard | Server-rendered pages from the same FastAPI app (`backend/app/admin/`, Jinja2) | No JavaScript framework, no external assets; one small script for uploads |
+| Media | Nginx static files | `secure_link` signed URLs; Range/206 native; videos (MP4), PDF notes, images; no transcoding |
+| Storage | `VIDEO_ROOT` host folder (OMV shared folder or plain disk) | Read-only for Nginx; read-write for the API, which runs as the folder's owner (`LMS_CONTENT_UID/GID`) |
 | Deployment | Docker Compose | One host; logs to Docker's json-file driver with rotation |
 
 ## Main flows
@@ -28,16 +33,20 @@ bearer token (32 random bytes). Only its SHA-256 is stored, in `sessions`. Every
 authenticated request looks the session up and checks it is unexpired, not revoked,
 and that the student is still active.
 
-**Browsing.** All catalogue queries are built from one set of visibility rules
-(`backend/app/access.py`): the student's own class, active class and subject,
-published chapter, published video. Anything else returns 404.
+**Browsing.** Content is organised as batch › class › subject › module › item (video, PDF
+notes, image). All catalogue queries are built from one set of visibility rules
+(`backend/app/access.py`): the student's own class, active batch, class and subject,
+published module, published item. Anything else returns 404.
 
-**Playback.**
+**Opening an item.**
 
 ```
-app ──POST /api/v1/videos/{id}/playback──▶ API: visible? file present? ──▶ signed URL
+app ──POST /api/v1/contents/{id}/open──▶ API: visible? file present? ──▶ signed URL
 app ──GET /media/<storage_key>?expires=…&sid=…&md5=… (Range: bytes=…)──▶ Nginx ──▶ file
 ```
+
+Videos stream from the URL; notes and images are downloaded once and shown on the tablet
+(PDF pages are drawn by Android's PdfRenderer), and opening them records them as viewed.
 
 The API signs `md5("{expires}{uri}{sid} {secret}")` (base64url). Nginx's
 `secure_link_md5` recomputes it from the request and the shared secret: a missing or
@@ -49,11 +58,25 @@ URL and continues from the last position.
 **Progress.** The app saves every 20 s while playing, on pause, on leaving the screen or
 app, and at the end. Leaving the player hands the final save back to the calling screen,
 which reloads only after it has been sent, so lists show the new position. The server
-upserts on `(student_id, video_id)` with `RETURNING`, clamps the position to the duration,
+upserts on `(student_id, content_id)` with `RETURNING`, clamps the position to the duration,
 marks completion when the position reaches `COMPLETION_THRESHOLD` × duration (or an
 explicit flag from the app) and never un-completes a lesson. Failed saves are ignored by
 the player and retried on the next tick; a failed completion save is re-sent until it
 succeeds. Concurrent saves from two devices are last-writer-wins.
+
+**Content management.** Staff work in the dashboard (`/admin/`, own sign-in, see below)
+or copy files into the network share. Each level of the catalogue is also a folder,
+`<batch>/<class>/<subject>/<module>/<NN-name>.<ext>`, so the share mirrors the app. The
+dashboard creates folders when it creates batches, classes, subjects and modules (folder
+names are fixed at creation; display names live in the database and in `title.txt` files),
+streams uploads to `VIDEO_ROOT/.uploads`, checks them, and renames them into the module
+folder; moving an item moves its file, deleting one moves the file to `.trash` (purged after
+30 days). The folder sync (`app/catalog_sync.py`; cron every 5 minutes and *Sync now*)
+registers files that arrive through the share, follows moved and renamed files (matched by
+size plus duration or checksum, so the item keeps its ID and students' progress), refreshes
+replaced files and archives items whose files are gone, with guards against archiving a
+library whose disk is not mounted. Sync, uploads, moves and deletes take one PostgreSQL
+advisory lock, so they never interleave.
 
 **Overload.** Sync endpoints hold a pooled database connection from authentication until
 the response is sent. A pure-ASGI admission gate limits each worker to pool-size +
@@ -74,24 +97,34 @@ the same reason.
 | Login throttling in Nginx (10/min per IP, burst 5) | Per-IP rather than per-account, so a classmate cannot lock another student out. |
 | Progressive MP4, no HLS | PRD §5.6. Revisit after load tests (§20 F1). |
 | `video_player` (ExoPlayer) for the prototype player (open decision §24.3) | Maintained by the Flutter team, uses Android Media3/ExoPlayer, supports seek, speed and network URLs. The player is isolated in `mobile/lib/player/` so it can be swapped for `media_kit` if tablet tests show problems. **Must be validated on the real tablets.** |
-| Admin via server-side CLI (open decision §24.7) | Meets FR-08 without exposing admin endpoints on the network: only someone with a shell on the server can change content or accounts. A web admin can follow later (§20 F3). |
+| Admin via server-side CLI (open decision §24.7), then a **staff web dashboard** (§20 F3) | The CLI came first (no admin endpoints on the network). The dashboard followed so that staff can manage batches, content and students without a shell: separate staff accounts (admin/staff roles), cookie sessions limited to `/admin`, CSRF tokens plus Origin checks on every form, a strict Content-Security-Policy, and the same Nginx allowlist as the rest. The CLI remains for setup and recovery. |
+| **Folders mirror the catalogue** | Teachers already organise files in folders; the share stays browsable and self-describing (`title.txt`, `<file>.txt`), and a copied library rebuilds the same catalogue on another server. Folder names are fixed at creation so renames never move files. |
+| Uploads streamed to the content disk | Nginx passes the body through unbuffered and the API writes it straight to `VIDEO_ROOT/.uploads`, then renames it into place (same filesystem): multi-GB videos need no RAM or `/tmp`, and a half-uploaded file is never visible to the sync or students. |
 | Pure-Python MP4 inspector | Duration, resolution, codecs and fast-start check without installing FFmpeg on the server. |
 | Migrations run on API start | Simple for the prototype; disable with `MIGRATE_ON_START=false` for controlled upgrades. |
 
 ## Data model
 
-As PRD §8, plus:
+PRD §8, extended in October 2026 (migration `0002`):
 
-- `videos.sort_order` — lesson order within a chapter (§10.3).
-- `student_video_progress.completed_at` — when completion first happened.
-- `sessions` — `token_hash` (unique), `expires_at`, `revoked_at`.
-- Unique constraints: `classes.name`, `(subjects.class_id, name)`,
-  `(chapters.subject_id, title)`, `videos.storage_key`, `students.username`,
-  `students.student_code`, `(student_video_progress.student_id, video_id)`.
+- `batches` (name, folder, active) → `classes` (`batch_id`, name, folder) → `subjects`
+  (folder, description) → `modules` (formerly *chapters*; folder, published) → `contents`
+  (formerly *videos*; `content_type` video/pdf/image, `mime_type`, `checksum`, status
+  draft/published/archived, `sort_order`).
+- `student_content_progress` (formerly `student_video_progress`): position, duration,
+  `completed_at`; for notes and images it records that they were opened.
+- `sessions` (students) and `staff_sessions` (dashboard): `token_hash` (unique),
+  `expires_at`, `revoked_at`. `staff_users`: username, name, role admin/staff, argon2id hash.
+- `sync_runs`: the report of each folder sync (last 200 kept).
+- Unique constraints: `batches.name`, `batches.folder`, `(classes.batch_id, name)`,
+  `(classes.batch_id, folder)`, `(subjects.class_id, name|folder)`,
+  `(modules.subject_id, title|folder)`, `contents.storage_key`, `students.username`,
+  `students.student_code`, `staff_users.username`, `(student_content_progress.student_id, content_id)`.
 - `student_code` is stored upper-case and `username` lower-case; sign-in accepts either,
   case-insensitively.
-- Storage keys are validated (`[A-Za-z0-9._-]` path segments, `.mp4`/`.m4v`, no `..`), so a
-  key can never point outside `VIDEO_ROOT` and never needs URL encoding.
+- Storage keys are validated (`[A-Za-z0-9._-]` path segments starting with a letter or
+  digit, `.mp4 .m4v .pdf .jpg .jpeg .png .webp`, no `..`), so a key can never point outside
+  `VIDEO_ROOT`, into the hidden `.uploads`/`.trash` folders, or need URL encoding.
 
 ## Security summary (PRD §13)
 
@@ -103,9 +136,16 @@ As PRD §8, plus:
   `server_tokens off`, `no-store` on API responses. Nginx overwrites `X-Forwarded-For`,
   so the client address in API logs cannot be spoofed.
 - PostgreSQL is on an internal Docker network reachable only by the API; the API is
-  reachable only by Nginx; neither publishes a port. Containers mount media read-only,
-  drop all capabilities (Nginx keeps the few it needs to start) and run with
-  `no-new-privileges`; the API runs as a non-root user on a read-only image.
+  reachable only by Nginx; neither publishes a port. Nginx mounts the media read-only; the
+  API mounts it read-write (dashboard file operations) as the folder's owner, not root.
+  Containers drop all capabilities (Nginx keeps the few it needs to start) and run with
+  `no-new-privileges`; the API image is read-only.
+- Staff dashboard: separate accounts and sessions from students (an HttpOnly, SameSite=Strict
+  cookie limited to `/admin`, 12 h), CSRF token and Origin check on every state change,
+  Content-Security-Policy `default-src 'self'` without inline scripts or styles,
+  `X-Frame-Options: DENY`, no caching, sign-in throttled in Nginx (10/min per IP). Uploads
+  are type-checked by content (MP4 structure, PDF header, image signature), size-limited and
+  never executed or served from the API.
 - Logs omit passwords, tokens and URL signatures: Nginx logs `$uri`, not the query string,
   and its error log is limited to `crit` for `/media/` because error-log lines would
   include the signed request line.
@@ -125,7 +165,10 @@ As PRD §8, plus:
   to the client IP (`$remote_addr`) is possible but breaks when tablets roam between APs
   with different DHCP scopes; evaluate after the Wi-Fi survey.
 - **No content protection** against screen recording or copying (PRD §13).
-- **No admin web UI**; content and accounts are managed with the CLI.
+- **The dashboard is HTTP only** like the rest (see the first point): staff passwords cross
+  the LAN unencrypted. Sign in from wired staff PCs or a trusted network until TLS is added.
+- **No audit log** of staff actions beyond the API access log (which records the staff ID
+  per request).
 - **Login throttling is per IP only** (in Nginx); there is no per-account lockout.
 - **The Nginx allowlist does not cover responses made with `return`** (`/nginx-health`,
   the 404 catch-all, the media 403/410 signature checks), which answer before allow/deny

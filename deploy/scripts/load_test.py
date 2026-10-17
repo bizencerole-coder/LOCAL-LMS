@@ -169,8 +169,9 @@ class Client(threading.Thread):
 
         videos = []
         for subject in self.api("GET", "/api/v1/subjects", key="subjects"):
-            for chapter in self.api("GET", f"/api/v1/subjects/{subject['id']}/chapters", key="chapters"):
-                videos += self.api("GET", f"/api/v1/chapters/{chapter['id']}/videos", key="videos")
+            for module in self.api("GET", f"/api/v1/subjects/{subject['id']}/modules", key="modules"):
+                contents = self.api("GET", f"/api/v1/modules/{module['id']}/contents", key="contents")
+                videos += [item for item in contents if item.get("type") == "video"]
         if not videos:
             self.m.error(f"{self.username}: no published lessons visible")
             return
@@ -185,8 +186,8 @@ class Client(threading.Thread):
     def watch(self, video: dict) -> None:
         """One playback session: authorize, then stream with seeks until the deadline."""
         started = time.perf_counter()
-        info = self.api("POST", f"/api/v1/videos/{video['id']}/playback", key="playback")
-        url = info["playback_url"]
+        info = self.api("POST", f"/api/v1/contents/{video['id']}/open", key="playback")
+        url = info["url"]
         size = self.head(url)
         duration = float(info.get("duration_seconds") or 0) or 600.0
         bitrate = size * 8 / duration  # bits per second of media
@@ -205,7 +206,7 @@ class Client(threading.Thread):
         while time.monotonic() < self.deadline:
             offset = int(position * bitrate / 8)
             if offset >= size:
-                self.api("PUT", f"/api/v1/videos/{video['id']}/progress",
+                self.api("PUT", f"/api/v1/contents/{video['id']}/progress",
                          {"position_seconds": int(duration), "duration_seconds": int(duration), "is_completed": True},
                          key="progress")
                 self.m.count("completions")
@@ -248,7 +249,7 @@ class Client(threading.Thread):
                         now_pos = buffered_until
                     position = now_pos
                     if time.monotonic() >= next_progress:
-                        self.api("PUT", f"/api/v1/videos/{video['id']}/progress",
+                        self.api("PUT", f"/api/v1/contents/{video['id']}/progress",
                                  {"position_seconds": int(position), "duration_seconds": int(duration)}, key="progress")
                         next_progress = time.monotonic() + PROGRESS_EVERY
                     if time.monotonic() >= self.deadline:
@@ -268,7 +269,7 @@ class Client(threading.Thread):
             finally:
                 conn.close()
 
-        self.api("PUT", f"/api/v1/videos/{video['id']}/progress",
+        self.api("PUT", f"/api/v1/contents/{video['id']}/progress",
                  {"position_seconds": int(position), "duration_seconds": int(duration)}, key="progress")
 
 
@@ -366,7 +367,7 @@ def main() -> int:
     print()
     print("| API endpoint | n | p50 | p95 | max |")
     print("|---|---:|---:|---:|---:|")
-    for key in ("login", "subjects", "chapters", "videos", "playback", "media HEAD", "progress", "logout"):
+    for key in ("login", "subjects", "modules", "contents", "playback", "media HEAD", "progress", "logout"):
         values = lat.get(key, [])
         if values:
             print(f"| {key} | {len(values)} | {ms(percentile(values, 50))} | {ms(percentile(values, 95))} | {ms(max(values))} |")

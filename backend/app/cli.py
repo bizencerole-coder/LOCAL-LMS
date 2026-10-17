@@ -1,13 +1,13 @@
-"""Prototype content administration (FR-08).
+"""Server-side administration: the same operations as the web dashboard, for the shell.
 
-Run inside the API container, e.g.:
+Run inside the API container (deploy/scripts/lms-admin.sh wraps this), e.g.:
 
-    docker compose exec api python -m app.cli tree
-    docker compose exec api python -m app.cli add-video --chapter "Class 12/Computer Science/Python Basics" \\
-        --storage-key class12/computer-science/lesson-04.mp4 --title "Lesson 4"
+    python -m app.cli tree
+    python -m app.cli create-staff --username principal --name "Principal" --role admin
+    python -m app.cli sync-videos --publish --archive-missing
 
-Admin actions are only available from the server shell; the student API has no
-admin endpoints. Passwords are never accepted as command-line arguments.
+Passwords are never accepted as command-line arguments: they are prompted for, or read
+with --password-stdin / --password-env.
 """
 
 from __future__ import annotations
@@ -21,26 +21,39 @@ import sys
 import uuid
 from datetime import timedelta
 from pathlib import Path
-from typing import NamedTuple
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.orm import Session
 
+from .catalog_sync import record_sync_run, relocate_legacy_layout, sync_catalogue
 from .config import get_settings
 from .db import session_scope
-from .media import ALLOWED_EXTENSIONS, InvalidStorageKey, resolve_media_path, validate_storage_key
+from .fileinfo import ContentFileError, ContentFileInfo, inspect_content_file
+from .media import (
+    ALLOWED_EXTENSIONS,
+    InvalidStorageKey,
+    content_type_for,
+    is_valid_folder,
+    resolve_media_path,
+    slugify,
+    validate_storage_key,
+)
 from .models import (
     AuthSession,
-    Chapter,
+    Batch,
+    Content,
+    ContentStatus,
+    Module,
     SchoolClass,
+    StaffRole,
+    StaffSession,
+    StaffUser,
     Student,
     Subject,
-    Video,
-    VideoStatus,
     utcnow,
 )
-from .mp4info import Mp4Error, inspect_mp4, report
+from .mp4info import report
 from .security import MIN_PASSWORD_LENGTH, hash_password
 
 DEFAULT_MANIFEST = Path(__file__).resolve().parent.parent / "seed" / "demo_catalog.json"
@@ -60,73 +73,118 @@ def _as_uuid(value: str) -> uuid.UUID | None:
         return None
 
 
-def _check_name(value: str, what: str) -> str:
+def _check_name(value: str, what: str, max_length: int = 200) -> str:
     value = value.strip()
     if not value:
         raise CliError(f"{what} must not be empty.")
     if "/" in value:
         raise CliError(f"{what} must not contain '/': {value!r}")
+    if len(value) > max_length:
+        raise CliError(f"{what} must be at most {max_length} characters.")
     return value
 
 
-def find_class(db: Session, ref: str) -> SchoolClass:
+def _check_folder(value: str | None, default_from: str) -> str:
+    folder = value.strip() if value else slugify(default_from)
+    if not is_valid_folder(folder):
+        raise CliError(
+            f"Folder name {folder!r} is not valid: use letters, digits, '.', '-' and '_' "
+            "only, starting with a letter or digit."
+        )
+    return folder
+
+
+def find_batch(db: Session, ref: str) -> Batch:
+    """By ID, name or folder."""
     ref_id = _as_uuid(ref)
-    found = (
-        db.get(SchoolClass, ref_id)
-        if ref_id
-        else db.scalar(select(SchoolClass).where(SchoolClass.name == ref.strip()))
-    )
+    if ref_id:
+        found = db.get(Batch, ref_id)
+    else:
+        found = db.scalar(select(Batch).where(or_(Batch.name == ref.strip(), Batch.folder == ref.strip())))
     if found is None:
-        raise CliError(f"Class not found: {ref}")
+        raise CliError(f"Batch not found: {ref}")
     return found
 
 
+def find_class(db: Session, ref: str) -> SchoolClass:
+    """By ID, "Batch/Class", or a class name that is unique across batches."""
+    ref_id = _as_uuid(ref)
+    if ref_id:
+        found = db.get(SchoolClass, ref_id)
+        if found is None:
+            raise CliError(f"Class not found: {ref}")
+        return found
+    parts = [p.strip() for p in ref.split("/")]
+    if len(parts) == 2:
+        batch = find_batch(db, parts[0])
+        found = db.scalar(
+            select(SchoolClass).where(
+                SchoolClass.batch_id == batch.id,
+                or_(SchoolClass.name == parts[1], SchoolClass.folder == parts[1]),
+            )
+        )
+        if found is None:
+            raise CliError(f"Class not found: {ref}")
+        return found
+    if len(parts) != 1:
+        raise CliError(f'Class reference must be an ID, "Batch/Class" or a class name: {ref}')
+    matches = db.scalars(select(SchoolClass).where(SchoolClass.name == parts[0])).all()
+    if not matches:
+        raise CliError(f"Class not found: {ref}")
+    if len(matches) > 1:
+        names = ", ".join(f'"{class_label(db, c)}"' for c in matches)
+        raise CliError(f"More than one class is called {ref!r}; use one of: {names}")
+    return matches[0]
+
+
 def find_subject(db: Session, ref: str) -> Subject:
-    """By ID or "Class/Subject"."""
+    """By ID, "Class/Subject" or "Batch/Class/Subject"."""
     ref_id = _as_uuid(ref)
     if ref_id:
         found = db.get(Subject, ref_id)
     else:
         parts = [p.strip() for p in ref.split("/")]
-        if len(parts) != 2:
-            raise CliError(f'Subject reference must be an ID or "Class/Subject": {ref}')
-        school_class = find_class(db, parts[0])
+        if len(parts) not in (2, 3):
+            raise CliError(f'Subject reference must be an ID or "[Batch/]Class/Subject": {ref}')
+        school_class = find_class(db, "/".join(parts[:-1]))
         found = db.scalar(
-            select(Subject).where(Subject.class_id == school_class.id, Subject.name == parts[1])
+            select(Subject).where(
+                Subject.class_id == school_class.id, or_(Subject.name == parts[-1], Subject.folder == parts[-1])
+            )
         )
     if found is None:
         raise CliError(f"Subject not found: {ref}")
     return found
 
 
-def find_chapter(db: Session, ref: str) -> Chapter:
-    """By ID or "Class/Subject/Chapter"."""
+def find_module(db: Session, ref: str) -> Module:
+    """By ID, "Class/Subject/Module" or "Batch/Class/Subject/Module"."""
     ref_id = _as_uuid(ref)
     if ref_id:
-        found = db.get(Chapter, ref_id)
+        found = db.get(Module, ref_id)
     else:
         parts = [p.strip() for p in ref.split("/")]
-        if len(parts) != 3:
-            raise CliError(f'Chapter reference must be an ID or "Class/Subject/Chapter": {ref}')
-        subject = find_subject(db, f"{parts[0]}/{parts[1]}")
+        if len(parts) not in (3, 4):
+            raise CliError(f'Module reference must be an ID or "[Batch/]Class/Subject/Module": {ref}')
+        subject = find_subject(db, "/".join(parts[:-1]))
         found = db.scalar(
-            select(Chapter).where(Chapter.subject_id == subject.id, Chapter.title == parts[2])
+            select(Module).where(Module.subject_id == subject.id, or_(Module.title == parts[-1], Module.folder == parts[-1]))
         )
     if found is None:
-        raise CliError(f"Chapter not found: {ref}")
+        raise CliError(f"Module not found: {ref}")
     return found
 
 
-def find_video(db: Session, ref: str) -> Video:
+def find_content(db: Session, ref: str) -> Content:
     """By ID or storage key."""
     ref_id = _as_uuid(ref)
     found = (
-        db.get(Video, ref_id)
+        db.get(Content, ref_id)
         if ref_id
-        else db.scalar(select(Video).where(Video.storage_key == ref.strip()))
+        else db.scalar(select(Content).where(Content.storage_key == ref.strip()))
     )
     if found is None:
-        raise CliError(f"Video not found: {ref}")
+        raise CliError(f"Content not found: {ref}")
     return found
 
 
@@ -144,6 +202,23 @@ def find_student(db: Session, ref: str) -> Student:
     if found is None:
         raise CliError(f"Student not found: {ref}")
     return found
+
+
+def find_staff(db: Session, ref: str) -> StaffUser:
+    ref_id = _as_uuid(ref)
+    found = (
+        db.get(StaffUser, ref_id)
+        if ref_id
+        else db.scalar(select(StaffUser).where(StaffUser.username == ref.strip().lower()))
+    )
+    if found is None:
+        raise CliError(f"Staff account not found: {ref}")
+    return found
+
+
+def class_label(db: Session, school_class: SchoolClass) -> str:
+    batch = db.get(Batch, school_class.batch_id)
+    return f"{batch.name}/{school_class.name}"
 
 
 # --------------------------------------------------------------------------- helpers
@@ -174,36 +249,29 @@ def revoke_sessions(db: Session, student: Student) -> int:
     return result.rowcount or 0
 
 
-def inspect_video_file(storage_key: str) -> tuple[Path, dict, list[str]]:
-    """Validate the key, check the file, and extract metadata.
+def revoke_staff_sessions(db: Session, staff: StaffUser) -> int:
+    result = db.execute(
+        update(StaffSession)
+        .where(StaffSession.staff_id == staff.id, StaffSession.revoked_at.is_(None))
+        .values(revoked_at=utcnow())
+    )
+    return result.rowcount or 0
 
-    Returns (path, metadata for the Video row, problems). Raises CliError if the
-    key is invalid or the file is missing/unreadable/not an MP4.
-    """
+
+def inspect_content(storage_key: str) -> tuple[Path, ContentFileInfo]:
+    """Validate the key, check the file, and extract metadata. CliError if unusable."""
     try:
         key = validate_storage_key(storage_key)
     except InvalidStorageKey as exc:
         raise CliError(str(exc)) from exc
     path = resolve_media_path(get_settings().video_root, key)
-    if not path.is_file():
-        raise CliError(f"File not found: {path}")
-    if not os.access(path, os.R_OK):
-        raise CliError(f"File is not readable: {path}")
     try:
-        info = inspect_mp4(path)
-    except (Mp4Error, OSError) as exc:
-        raise CliError(f"Cannot read {path}: {exc}") from exc
-    meta = {
-        "file_size_bytes": info.size_bytes,
-        "duration_seconds": round(info.duration_seconds) if info.duration_seconds else None,
-        "resolution_width": info.width,
-        "resolution_height": info.height,
-        "mime_type": "video/mp4",
-    }
-    return path, meta, info.problems()
+        return path, inspect_content_file(path)
+    except ContentFileError as exc:
+        raise CliError(str(exc)) from exc
 
 
-def _fmt_duration(seconds: int | None) -> str:
+def fmt_duration(seconds: int | None) -> str:
     if not seconds:
         return "--:--"
     h, rem = divmod(int(seconds), 3600)
@@ -211,31 +279,55 @@ def _fmt_duration(seconds: int | None) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
-# --------------------------------------------------------------------------- commands
+def _single_batch_or(db: Session, ref: str | None) -> Batch:
+    if ref:
+        return find_batch(db, ref)
+    batches = db.scalars(select(Batch)).all()
+    if len(batches) == 1:
+        return batches[0]
+    raise CliError("Give the batch with --batch (there is more than one, or none yet: create-batch).")
+
+
+# --------------------------------------------------------------------------- structure
+
+
+def cmd_create_batch(db: Session, args: argparse.Namespace) -> None:
+    name = _check_name(args.name, "Batch name", 120)
+    batch = Batch(name=name, folder=_check_folder(args.folder, name), description=args.description)
+    db.add(batch)
+    db.flush()
+    print(f"Created batch {batch.name} (folder {batch.folder}) id={batch.id}")
 
 
 def cmd_create_class(db: Session, args: argparse.Namespace) -> None:
-    item = SchoolClass(name=_check_name(args.name, "Class name"), description=args.description)
+    batch = _single_batch_or(db, args.batch)
+    name = _check_name(args.name, "Class name", 100)
+    item = SchoolClass(
+        batch_id=batch.id, name=name, folder=_check_folder(args.folder, name), description=args.description
+    )
     db.add(item)
     db.flush()
-    print(f"Created class {item.name} ({item.id})")
+    print(f"Created class {batch.name}/{item.name} (folder {item.folder}) id={item.id}")
 
 
 def cmd_create_subject(db: Session, args: argparse.Namespace) -> None:
     school_class = find_class(db, args.class_ref)
+    name = _check_name(args.name, "Subject name", 150)
     item = Subject(
-        class_id=school_class.id, name=_check_name(args.name, "Subject name"), sort_order=args.sort
+        class_id=school_class.id, name=name, folder=_check_folder(args.folder, name), sort_order=args.sort
     )
     db.add(item)
     db.flush()
-    print(f"Created subject {school_class.name}/{item.name} ({item.id})")
+    print(f"Created subject {school_class.name}/{item.name} (folder {item.folder}) id={item.id}")
 
 
-def cmd_create_chapter(db: Session, args: argparse.Namespace) -> None:
+def cmd_create_module(db: Session, args: argparse.Namespace) -> None:
     subject = find_subject(db, args.subject)
-    item = Chapter(
+    title = _check_name(args.title, "Module title")
+    item = Module(
         subject_id=subject.id,
-        title=_check_name(args.title, "Chapter title"),
+        title=title,
+        folder=_check_folder(args.folder, f"{args.sort:02d}-{title}" if args.sort else title),
         description=args.description,
         sort_order=args.sort,
         is_published=args.publish,
@@ -243,13 +335,16 @@ def cmd_create_chapter(db: Session, args: argparse.Namespace) -> None:
     db.add(item)
     db.flush()
     state = "published" if item.is_published else "unpublished"
-    print(f"Created {state} chapter {item.title} ({item.id})")
+    print(f"Created {state} module {item.title} (folder {item.folder}) id={item.id}")
 
 
-def cmd_set_chapter_published(db: Session, args: argparse.Namespace) -> None:
-    chapter = find_chapter(db, args.chapter)
-    chapter.is_published = args.command == "publish-chapter"
-    print(f"Chapter {chapter.title}: {'published' if chapter.is_published else 'unpublished'}")
+def cmd_set_module_published(db: Session, args: argparse.Namespace) -> None:
+    module = find_module(db, args.module)
+    module.is_published = args.publish_value
+    print(f"Module {module.title}: {'published' if module.is_published else 'unpublished'}")
+
+
+# --------------------------------------------------------------------------- students
 
 
 def cmd_create_student(db: Session, args: argparse.Namespace) -> None:
@@ -277,7 +372,7 @@ def cmd_set_password(db: Session, args: argparse.Namespace) -> None:
 
 def cmd_set_student_active(db: Session, args: argparse.Namespace) -> None:
     student = find_student(db, args.student)
-    student.is_active = args.command == "activate-student"
+    student.is_active = args.active_value
     revoked = 0 if student.is_active else revoke_sessions(db, student)
     state = "active" if student.is_active else f"inactive ({revoked} session(s) signed out)"
     print(f"Student {student.username}: {state}")
@@ -287,21 +382,20 @@ def cmd_assign_class(db: Session, args: argparse.Namespace) -> None:
     student = find_student(db, args.student)
     school_class = find_class(db, args.class_ref)
     student.class_id = school_class.id
-    print(f"Student {student.username} assigned to {school_class.name}")
+    print(f"Student {student.username} assigned to {class_label(db, school_class)}")
 
 
 def cmd_list_students(db: Session, args: argparse.Namespace) -> None:
     rows = db.execute(
-        select(Student, SchoolClass.name)
+        select(Student, SchoolClass.name, Batch.name)
         .outerjoin(SchoolClass, Student.class_id == SchoolClass.id)
-        .order_by(SchoolClass.name, Student.username)
+        .outerjoin(Batch, SchoolClass.batch_id == Batch.id)
+        .order_by(Batch.name, SchoolClass.name, Student.username)
     ).all()
-    for student, class_name in rows:
+    for student, class_name, batch_name in rows:
         flag = "" if student.is_active else "  [inactive]"
-        print(
-            f"{student.username:<24} {student.student_code:<16} {class_name or '-':<16} "
-            f"{student.id}  {student.full_name}{flag}"
-        )
+        where = f"{batch_name}/{class_name}" if class_name else "-"
+        print(f"{student.username:<24} {student.student_code:<16} {where:<28} {student.id}  {student.full_name}{flag}")
     print(f"{len(rows)} student(s)")
 
 
@@ -313,6 +407,8 @@ def cmd_create_load_students(db: Session, args: argparse.Namespace) -> None:
     """Students load001..loadNNN for deploy/scripts/load_test.py. Re-runnable."""
     if not re.fullmatch(r"[a-z][a-z0-9]{1,20}", args.prefix):
         raise CliError("--prefix must be 2-21 lower-case letters/digits (default: load)")
+    if not 1 <= args.count <= 999:
+        raise CliError("--count must be 1-999")
     school_class = find_class(db, args.class_ref)
     password_hash = hash_password(read_password(args, "Password for load-test students: "))
     existing = set(db.scalars(select(Student.username).where(Student.username.like(f"{args.prefix}___"))))
@@ -333,7 +429,10 @@ def cmd_create_load_students(db: Session, args: argparse.Namespace) -> None:
         )
         created += 1
     db.flush()
-    print(f"Created {created} load-test student(s); {args.prefix}001..{args.prefix}{args.count:03d} exist in {school_class.name}")
+    print(
+        f"Created {created} load-test student(s); {args.prefix}001..{args.prefix}{args.count:03d} "
+        f"exist in {school_class.name}"
+    )
 
 
 def cmd_delete_load_students(db: Session, args: argparse.Namespace) -> None:
@@ -347,88 +446,129 @@ def cmd_delete_load_students(db: Session, args: argparse.Namespace) -> None:
     print(f"Deleted {result.rowcount or 0} load-test student(s) with prefix {args.prefix!r}")
 
 
-def cmd_add_video(db: Session, args: argparse.Namespace) -> None:
-    chapter = find_chapter(db, args.chapter)
-    path, meta, problems = inspect_video_file(args.storage_key)
+# --------------------------------------------------------------------------- staff
+
+
+def cmd_create_staff(db: Session, args: argparse.Namespace) -> None:
+    username = args.username.strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,99}", username):
+        raise CliError("Username: 2-100 characters, lower-case letters, digits, '.', '-', '_'.")
+    if db.scalar(select(StaffUser.id).where(StaffUser.username == username)):
+        raise CliError(f"A staff account called {username!r} already exists (use set-staff-password).")
+    password = read_password(args, f"Password for {username}: ")
+    staff = StaffUser(
+        username=username,
+        full_name=_check_name(args.name, "Name"),
+        password_hash=hash_password(password),
+        role=args.role,
+        is_active=True,
+    )
+    db.add(staff)
+    db.flush()
+    print(f"Created {staff.role} account {staff.username} for the dashboard (/admin)")
+
+
+def cmd_set_staff_password(db: Session, args: argparse.Namespace) -> None:
+    staff = find_staff(db, args.staff)
+    staff.password_hash = hash_password(read_password(args, f"New password for {staff.username}: "))
+    revoked = revoke_staff_sessions(db, staff)
+    print(f"Password updated for {staff.username}; {revoked} dashboard session(s) signed out.")
+
+
+def cmd_set_staff_active(db: Session, args: argparse.Namespace) -> None:
+    staff = find_staff(db, args.staff)
+    staff.is_active = args.active_value
+    revoked = 0 if staff.is_active else revoke_staff_sessions(db, staff)
+    print(f"Staff {staff.username}: {'active' if staff.is_active else f'inactive ({revoked} session(s) signed out)'}")
+
+
+def cmd_list_staff(db: Session, args: argparse.Namespace) -> None:
+    rows = db.scalars(select(StaffUser).order_by(StaffUser.username)).all()
+    for staff in rows:
+        flag = "" if staff.is_active else "  [inactive]"
+        print(f"{staff.username:<24} {staff.role:<6} {staff.full_name}{flag}")
+    print(f"{len(rows)} staff account(s)")
+
+
+# --------------------------------------------------------------------------- content
+
+
+def cmd_add_content(db: Session, args: argparse.Namespace) -> None:
+    module = find_module(db, args.module)
+    path, info = inspect_content(args.storage_key)
     key = validate_storage_key(args.storage_key)
-    if db.scalar(select(Video.id).where(Video.storage_key == key)):
-        raise CliError(f"A video is already registered for {key}")
-    video = Video(
-        chapter_id=chapter.id,
-        title=args.title.strip(),
+    if db.scalar(select(Content.id).where(Content.storage_key == key)):
+        raise CliError(f"Content is already registered for {key}")
+    content = Content(
+        module_id=module.id,
+        title=_check_name(args.title, "Title"),
         description=args.description,
         storage_key=key,
         sort_order=args.sort,
-        status=VideoStatus.DRAFT.value,
-        **meta,
+        status=ContentStatus.DRAFT.value,
+        **info.metadata(),
     )
-    db.add(video)
+    db.add(content)
     db.flush()
-    print(f"Registered draft video {video.title} ({video.id})")
-    print(f"  file: {path}  duration: {_fmt_duration(video.duration_seconds)}  "
-          f"size: {meta['file_size_bytes'] / 1e6:.1f} MB  {meta['resolution_width']}x{meta['resolution_height']}")
-    for problem in problems:
+    print(f"Registered draft {content.content_type} {content.title} ({content.id})")
+    print(f"  file: {path}  size: {info.size_bytes / 1e6:.1f} MB  duration: {fmt_duration(info.duration_seconds)}")
+    for problem in info.problems:
         print(f"  WARNING: {problem}")
-    print("Check it plays, then run: python -m app.cli publish-video " + str(video.id))
+    print("Check it, then run: python -m app.cli publish-content " + str(content.id))
 
 
-def cmd_set_video_status(db: Session, args: argparse.Namespace) -> None:
-    video = find_video(db, args.video)
-    status = {
-        "publish-video": VideoStatus.PUBLISHED,
-        "unpublish-video": VideoStatus.DRAFT,
-        "archive-video": VideoStatus.ARCHIVED,
-    }[args.command]
-    if status is VideoStatus.PUBLISHED and not args.force:
-        _, meta, problems = inspect_video_file(video.storage_key)
-        if problems:
+def cmd_set_content_status(db: Session, args: argparse.Namespace) -> None:
+    content = find_content(db, args.content)
+    status = ContentStatus(args.status_value)
+    if status is ContentStatus.PUBLISHED and not args.force:
+        _, info = inspect_content(content.storage_key)
+        if info.problems:
             raise CliError(
-                "Not publishing; the file has problems:\n  - " + "\n  - ".join(problems)
+                "Not publishing; the file has problems:\n  - " + "\n  - ".join(info.problems)
                 + "\nFix the file, or pass --force to publish anyway."
             )
-        for field_name, value in meta.items():
-            setattr(video, field_name, value)
-    video.status = status.value
-    print(f"Video {video.title}: {status.value}")
-    if status is not VideoStatus.PUBLISHED:
+        for column, value in info.metadata().items():
+            setattr(content, column, value)
+    content.status = status.value
+    print(f"{content.content_type} {content.title}: {status.value}")
+    if status is not ContentStatus.PUBLISHED:
         ttl = get_settings().playback_url_ttl_seconds
-        print(f"  Note: playback URLs already issued stay valid for up to {ttl // 60} minutes.")
+        print(f"  Note: links already issued stay valid for up to {ttl // 60} minutes.")
 
 
 def cmd_check_media(db: Session, args: argparse.Namespace) -> int:
-    videos = db.scalars(select(Video).order_by(Video.storage_key)).all()
+    items = db.scalars(select(Content).order_by(Content.storage_key)).all()
     failures = 0
-    for video in videos:
+    for content in items:
         try:
-            _, meta, problems = inspect_video_file(video.storage_key)
+            _, info = inspect_content(content.storage_key)
         except CliError as exc:
             failures += 1
-            print(f"FAIL  {video.status:<9} {video.storage_key}: {exc}")
+            print(f"FAIL  {content.status:<9} {content.storage_key}: {exc}")
             continue
-        if video.file_size_bytes and meta["file_size_bytes"] != video.file_size_bytes:
-            problems.append(
-                f"size changed since registration ({video.file_size_bytes} -> {meta['file_size_bytes']} bytes)"
-            )
+        problems = list(info.problems)
+        if content.file_size_bytes and info.size_bytes != content.file_size_bytes:
+            problems.append(f"size changed since registration ({content.file_size_bytes} -> {info.size_bytes} bytes)")
         if args.update:
-            for field_name, value in meta.items():
-                setattr(video, field_name, value)
+            for column, value in info.metadata().items():
+                setattr(content, column, value)
         label = "WARN" if problems else "OK"
-        print(f"{label:<5} {video.status:<9} {video.storage_key}  {_fmt_duration(meta['duration_seconds'])}")
+        print(f"{label:<5} {content.status:<9} {content.storage_key}  {fmt_duration(info.duration_seconds)}")
         for problem in problems:
             print(f"      - {problem}")
-    print(f"{len(videos)} video(s) checked, {failures} missing or unreadable")
+    print(f"{len(items)} item(s) checked, {failures} missing or unreadable")
     return 1 if failures else 0
 
 
 def cmd_scan_videos(db: Session, args: argparse.Namespace) -> None:
     root = get_settings().video_root
-    registered = set(db.scalars(select(Video.storage_key)))
+    registered = set(db.scalars(select(Content.storage_key)))
     found = 0
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in ALLOWED_EXTENSIONS:
+        if not path.is_file() or content_type_for(path.name) is None:
             continue
         key = path.relative_to(root).as_posix()
-        if key in registered:
+        if key in registered or any(part.startswith(".") for part in key.split("/")):
             continue
         found += 1
         try:
@@ -440,385 +580,153 @@ def cmd_scan_videos(db: Session, args: argparse.Namespace) -> None:
 
 
 def cmd_tree(db: Session, args: argparse.Namespace) -> None:
-    for school_class in db.scalars(select(SchoolClass).order_by(SchoolClass.name)):
-        students = db.scalar(select(func.count(Student.id)).where(Student.class_id == school_class.id))
-        flag = "" if school_class.is_active else " [inactive]"
-        print(f"{school_class.name}{flag}  ({students} students)  id={school_class.id}")
-        for subject in db.scalars(
-            select(Subject).where(Subject.class_id == school_class.id).order_by(Subject.sort_order, Subject.name)
+    for batch in db.scalars(select(Batch).order_by(Batch.sort_order, Batch.name)):
+        flag = "" if batch.is_active else " [inactive]"
+        print(f"{batch.name}{flag}  folder={batch.folder}  id={batch.id}")
+        for school_class in db.scalars(
+            select(SchoolClass).where(SchoolClass.batch_id == batch.id).order_by(SchoolClass.sort_order, SchoolClass.name)
         ):
-            flag = "" if subject.is_active else " [inactive]"
-            print(f"  {subject.name}{flag}  id={subject.id}")
-            for chapter in db.scalars(
-                select(Chapter).where(Chapter.subject_id == subject.id).order_by(Chapter.sort_order, Chapter.title)
+            students = db.scalar(select(func.count(Student.id)).where(Student.class_id == school_class.id))
+            flag = "" if school_class.is_active else " [inactive]"
+            print(f"  {school_class.name}{flag}  ({students} students)  folder={school_class.folder}  id={school_class.id}")
+            for subject in db.scalars(
+                select(Subject).where(Subject.class_id == school_class.id).order_by(Subject.sort_order, Subject.name)
             ):
-                flag = "" if chapter.is_published else " [unpublished]"
-                print(f"    {chapter.title}{flag}  id={chapter.id}")
-                for video in db.scalars(
-                    select(Video).where(Video.chapter_id == chapter.id).order_by(Video.sort_order, Video.title)
+                flag = "" if subject.is_active else " [inactive]"
+                print(f"    {subject.name}{flag}  folder={subject.folder}  id={subject.id}")
+                for module in db.scalars(
+                    select(Module).where(Module.subject_id == subject.id).order_by(Module.sort_order, Module.title)
                 ):
-                    print(
-                        f"      [{video.status}] {video.title}  {_fmt_duration(video.duration_seconds)}  "
-                        f"{video.storage_key}  id={video.id}"
-                    )
+                    flag = "" if module.is_published else " [unpublished]"
+                    print(f"      {module.title}{flag}  folder={module.folder or '(subject folder)'}  id={module.id}")
+                    for content in db.scalars(
+                        select(Content).where(Content.module_id == module.id).order_by(Content.sort_order, Content.title)
+                    ):
+                        length = fmt_duration(content.duration_seconds) if content.is_video else content.content_type
+                        print(
+                            f"        [{content.status}] {content.title}  {length}  "
+                            f"{content.storage_key}  id={content.id}"
+                        )
 
 
 def cmd_purge_sessions(db: Session, args: argparse.Namespace) -> None:
     cutoff = utcnow() - timedelta(days=1)
-    result = db.execute(
-        delete(AuthSession).where(
-            or_(AuthSession.expires_at <= utcnow(), AuthSession.revoked_at <= cutoff)
-        )
+    students = db.execute(
+        delete(AuthSession).where(or_(AuthSession.expires_at <= utcnow(), AuthSession.revoked_at <= cutoff))
     )
-    print(f"Deleted {result.rowcount or 0} expired/revoked session(s)")
+    staff = db.execute(
+        delete(StaffSession).where(or_(StaffSession.expires_at <= utcnow(), StaffSession.revoked_at <= cutoff))
+    )
+    print(f"Deleted {students.rowcount or 0} student and {staff.rowcount or 0} staff expired/revoked session(s)")
 
 
 def cmd_inspect_media(_: Session | None, args: argparse.Namespace) -> int:
     return report(args.paths)
 
 
-# --------------------------------------------------------------------------- sync-videos
-#
-# Folder layout under VIDEO_ROOT (names: letters, digits, '.', '-', '_'):
-#
-#   class12/computer-science/01-python-basics/02-python-functions.mp4
-#   <class>/<subject>/<chapter>/<video>.mp4      (chapter folder optional -> "Lessons")
-#
-# Display names come from the folder/file names: a leading "NN-" gives the order and is
-# dropped, '-' and '_' become spaces, words are capitalised, and a digit after letters
-# gets a space ("class12" -> "Class 12"). A `title.txt` inside a class/subject/chapter
-# folder, or a `<video>.txt` next to a video (first line title, rest description),
-# overrides the derived name.
-#
-# A registered lesson follows its file: when the file is moved or renamed (same size and
-# duration, gone from the old path, present at exactly one new path) the lesson keeps its
-# row, status and the students' progress and is re-filed by the new folders. A file
-# replaced in place has its size/duration refreshed. A file that is gone is archived only
-# with --archive-missing, and never when the whole folder is empty (storage unmounted).
-
-_ORDER_PREFIX_RE = re.compile(r"^(\d{1,3})[-_. ]+(.+)$")
-
-
-def _display_name(segment: str) -> tuple[int | None, str]:
-    """'02-python-functions' -> (2, 'Python Functions'); 'class12' -> (None, 'Class 12')."""
-    order: int | None = None
-    match = _ORDER_PREFIX_RE.match(segment)
-    if match:
-        order, segment = int(match.group(1)), match.group(2)
-    name = re.sub(r"[-_]+", " ", segment).strip()
-    name = re.sub(r"(?<=[A-Za-z])(?=\d)", " ", name)
-    name = " ".join(word[:1].upper() + word[1:] for word in name.split())
-    return order, name
-
-
-def _first_line(path: Path) -> str | None:
-    try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                return line.strip()
-    except OSError:
-        return None
-    return None
-
-
-def _folder_title(folder: Path, derived: str) -> str:
-    override = _first_line(folder / "title.txt") if (folder / "title.txt").is_file() else None
-    return override or derived
-
-
-def _sidecar(video_path: Path) -> tuple[str | None, str | None]:
-    """Title and description from `<video>.txt` next to the file, if present."""
-    side = video_path.with_suffix(".txt")
-    if not side.is_file():
-        return None, None
-    try:
-        lines = side.read_text(encoding="utf-8").strip().splitlines()
-    except OSError:
-        return None, None
-    title = lines[0].strip() if lines else None
-    description = "\n".join(line.rstrip() for line in lines[1:]).strip() or None
-    return (title or None), description
-
-
-def _get_or_create_class(db: Session, name: str, created: list[str]) -> SchoolClass:
-    item = db.scalar(select(SchoolClass).where(SchoolClass.name == name))
-    if item is None:
-        item = SchoolClass(name=name, is_active=True)
-        db.add(item)
-        db.flush()
-        created.append(f"class {name}")
-    return item
-
-
-def _get_or_create_subject(
-    db: Session, school_class: SchoolClass, name: str, order: int | None, created: list[str]
-) -> Subject:
-    item = db.scalar(select(Subject).where(Subject.class_id == school_class.id, Subject.name == name))
-    if item is None:
-        item = Subject(class_id=school_class.id, name=name, sort_order=order or 0, is_active=True)
-        db.add(item)
-        db.flush()
-        created.append(f"subject {school_class.name}/{name}")
-    elif order is not None and item.sort_order != order:
-        item.sort_order = order
-    return item
-
-
-def _get_or_create_chapter(
-    db: Session, subject: Subject, title: str, order: int | None, created: list[str]
-) -> Chapter:
-    item = db.scalar(select(Chapter).where(Chapter.subject_id == subject.id, Chapter.title == title))
-    if item is None:
-        item = Chapter(subject_id=subject.id, title=title, sort_order=order or 0, is_published=True)
-        db.add(item)
-        db.flush()
-        created.append(f"chapter {subject.name}/{title}")
-    elif order is not None and item.sort_order != order:
-        item.sort_order = order
-    return item
-
-
-class _Placement(NamedTuple):
-    """Where a file belongs in the catalogue, read from its folder and file names."""
-
-    class_name: str
-    subject_order: int | None
-    subject_name: str
-    chapter_order: int | None
-    chapter_title: str
-    video_order: int | None
-    video_title: str
-
-    def __str__(self) -> str:
-        return f"{self.class_name} / {self.subject_name} / {self.chapter_title}"
-
-
-def _placement(root: Path, key: str) -> _Placement:
-    parts = key.split("/")
-    class_dir, subject_dir = parts[0], parts[1]
-    chapter_dir = parts[2] if len(parts) == 4 else None
-    class_name = _folder_title(root / class_dir, _display_name(class_dir)[1])
-    subject_order, subject_derived = _display_name(subject_dir)
-    subject_name = _folder_title(root / class_dir / subject_dir, subject_derived)
-    if chapter_dir is not None:
-        chapter_order, chapter_derived = _display_name(chapter_dir)
-        chapter_title = _folder_title(root / class_dir / subject_dir / chapter_dir, chapter_derived)
-    else:
-        chapter_order, chapter_title = 0, "Lessons"
-    video_order, video_title = _display_name(Path(parts[-1]).stem)
-    return _Placement(
-        class_name, subject_order, subject_name, chapter_order, chapter_title, video_order, video_title
-    )
-
-
-def _chapter_for(db: Session, place: _Placement, created: list[str]) -> Chapter:
-    school_class = _get_or_create_class(db, place.class_name, created)
-    subject = _get_or_create_subject(db, school_class, place.subject_name, place.subject_order, created)
-    return _get_or_create_chapter(db, subject, place.chapter_title, place.chapter_order, created)
-
-
-def _fingerprint(meta_or_video) -> tuple[int | None, int | None]:
-    """What identifies a file across a move: its size and duration."""
-    if isinstance(meta_or_video, dict):
-        return meta_or_video["file_size_bytes"], meta_or_video["duration_seconds"]
-    return meta_or_video.file_size_bytes, meta_or_video.duration_seconds
-
-
 def cmd_sync_videos(db: Session, args: argparse.Namespace) -> int:
-    """Bring the catalogue in line with the files under VIDEO_ROOT. Re-runnable."""
-    root = get_settings().video_root
-    registered = {v.storage_key: v for v in db.scalars(select(Video))}
-    created: list[str] = []
-    seen: set[str] = set()
-    new_files: list[tuple[str, Path, dict, list[str]]] = []
-    skipped = failed = updated = problems = 0
-
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in ALLOWED_EXTENSIONS:
-            continue
-        key = path.relative_to(root).as_posix()
-        try:
-            validate_storage_key(key)
-        except InvalidStorageKey as exc:
-            print(f"skip  {key}: {exc}")
-            skipped += 1
-            continue
-        if not 3 <= len(key.split("/")) <= 4:
-            print(f"skip  {key}: expected <class>/<subject>/[<chapter>/]<video>.mp4")
-            skipped += 1
-            continue
-        seen.add(key)
-        video = registered.get(key)
-        if video is not None and video.file_size_bytes == path.stat().st_size:
-            continue
-        try:
-            _, meta, file_problems = inspect_video_file(key)
-        except CliError as exc:
-            print(f"FAIL  {key}: {exc}")
-            failed += 1
-            problems += 1
-            continue
-        if video is None:
-            new_files.append((key, path, meta, file_problems))
-            continue
-        # The file was replaced (or has finished copying): refresh what the app shows.
-        for field_name, value in meta.items():
-            setattr(video, field_name, value)
-        updated += 1
-        print(
-            f"~ updated {key} (file changed: {_fmt_duration(meta['duration_seconds'])}, "
-            f"{meta['file_size_bytes']} bytes)"
-        )
-        for problem in file_problems:
-            problems += 1
-            print(f"      WARNING: {problem}")
-
-    # Moved or renamed files: a lesson whose file is gone, matched to exactly one new file of
-    # the same size and duration, keeps its row (and the students' progress) and is re-filed.
-    missing = [v for k, v in registered.items() if k not in seen and v.status != VideoStatus.ARCHIVED.value]
-    moved = 0
-    emptied: set[uuid.UUID] = set()  # chapters a move took a lesson out of
-    if missing and new_files:
-        gone: dict[tuple, list[Video]] = {}
-        for video in missing:
-            gone.setdefault(_fingerprint(video), []).append(video)
-        arrived: dict[tuple, list[tuple[str, Path, dict, list[str]]]] = {}
-        for entry in new_files:
-            arrived.setdefault(_fingerprint(entry[2]), []).append(entry)
-        for fingerprint, old_videos in gone.items():
-            new_entries = arrived.get(fingerprint, [])
-            if len(old_videos) != 1 or len(new_entries) != 1:
-                continue  # nothing to tell them apart: treat as new files (and removals)
-            video, entry = old_videos[0], new_entries[0]
-            key, path, meta, _ = entry
-            old_key, old_chapter_id = video.storage_key, video.chapter_id
-            place = _placement(root, key)
-            video.chapter_id = _chapter_for(db, place, created).id
-            if video.chapter_id != old_chapter_id:
-                emptied.add(old_chapter_id)
-            title, description = _sidecar(path)
-            if title:
-                video.title, video.description = title, description
-            elif video.title == _display_name(Path(old_key).stem)[1]:
-                video.title = place.video_title  # an automatic name follows the file name
-            if place.video_order is not None:
-                video.sort_order = place.video_order
-            for field_name, value in meta.items():
-                setattr(video, field_name, value)
-            video.storage_key = key
-            db.flush()
-            missing.remove(video)
-            new_files.remove(entry)
-            moved += 1
-            print(f"~ moved {old_key} -> {key}  [{video.status}] {place} / {video.title}")
-
-    added = 0
-    for key, path, meta, file_problems in new_files:
-        place = _placement(root, key)
-        title, description = _sidecar(path)
-        title = title or place.video_title
-        chapter = _chapter_for(db, place, created)
-        status = VideoStatus.PUBLISHED if (args.publish and not file_problems) else VideoStatus.DRAFT
-        db.add(
-            Video(
-                chapter_id=chapter.id,
-                title=title,
-                description=description,
-                storage_key=key,
-                sort_order=place.video_order or 0,
-                status=status.value,
-                **meta,
-            )
-        )
-        db.flush()
-        added += 1
-        print(f"+ [{status.value}] {place} / {title}  ({key})")
-        for problem in file_problems:
-            problems += 1
-            print(f"      WARNING: {problem}")
-
-    # A chapter whose last lesson was moved away disappears with it (it comes back from the
-    # folder as soon as a file is placed there again).
-    removed = 0
-    for chapter_id in emptied:
-        if db.scalar(select(func.count()).select_from(Video).where(Video.chapter_id == chapter_id)):
-            continue
-        chapter = db.get(Chapter, chapter_id)
-        if chapter is not None:
-            print(f"- removed empty chapter {db.get(Subject, chapter.subject_id).name}/{chapter.title}")
-            db.delete(chapter)
-            removed += 1
-    db.flush()
-
-    archived = 0
-    if args.archive_missing and missing:
-        if not seen:
-            print("WARNING: no video files found under VIDEO_ROOT; nothing archived (is the storage mounted?)")
-        else:
-            for video in missing:
-                video.status = VideoStatus.ARCHIVED.value
-                archived += 1
-                print(f"- archived {video.storage_key} (file not found)")
-
-    for line in created:
-        print(f"+ {line}")
-    print(
-        f"Sync complete: {added} video(s) registered"
-        f"{' and published' if args.publish else ' as draft'}, "
-        f"{moved} moved, {updated} updated, {len(seen) - added - moved - failed} already registered, "
-        f"{skipped} skipped, {problems} with problems, {archived} archived, "
-        f"{removed} empty chapter(s) removed."
+    """Bring the catalogue in line with the folders under VIDEO_ROOT. Re-runnable."""
+    result = sync_catalogue(
+        db,
+        get_settings().video_root,
+        publish=args.publish,
+        archive_missing=args.archive_missing,
+        allow_mass_archive=args.allow_mass_archive,
     )
-    if added and not args.publish:
-        print("Check them in the app or with 'tree', then publish with: publish-video <storage key>")
-    return 1 if problems else 0
+    record_sync_run(db, result, trigger="cli")
+    print(result.report)
+    if result.registered and not args.publish:
+        print("Check them in the dashboard or with 'tree', then publish them.")
+    return 1 if result.problems else 0
+
+
+def cmd_relocate_content(db: Session, args: argparse.Namespace) -> int:
+    lines = relocate_legacy_layout(db, get_settings().video_root, apply=args.apply)
+    for line in lines:
+        print(line)
+    if not lines and not args.quiet:
+        print("Nothing to move: every file is in its batch folder.")
+    elif lines and not args.apply:
+        print("Run again with --apply to move them.")
+    return 0
+
+
+# --------------------------------------------------------------------------- seed
 
 
 def cmd_seed_demo(db: Session, args: argparse.Namespace) -> None:
-    """Idempotently load demo classes, content and students from a JSON manifest."""
+    """Idempotently load demo batches, content and students from a JSON manifest."""
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
     password: str | None = None
 
-    for c in manifest.get("classes", []):
-        class_name = _check_name(c["name"], "Class name")
-        school_class = db.scalar(select(SchoolClass).where(SchoolClass.name == class_name))
-        if school_class is None:
-            school_class = SchoolClass(name=class_name, description=c.get("description"))
-            db.add(school_class)
+    for b in manifest.get("batches", []):
+        name = _check_name(b["name"], "Batch name", 120)
+        folder = _check_folder(b.get("folder"), name)
+        batch = db.scalar(select(Batch).where(or_(Batch.folder == folder, Batch.name == name)))
+        if batch is None:
+            batch = Batch(name=name, folder=folder, description=b.get("description"))
+            db.add(batch)
             db.flush()
-            print(f"+ class {school_class.name}")
-        for s in c.get("subjects", []):
-            subject_name = _check_name(s["name"], "Subject name")
-            subject = db.scalar(
-                select(Subject).where(Subject.class_id == school_class.id, Subject.name == subject_name)
+            print(f"+ batch {batch.name}")
+        for c in b.get("classes", []):
+            class_name = _check_name(c["name"], "Class name", 100)
+            class_folder = _check_folder(c.get("folder"), class_name)
+            school_class = db.scalar(
+                select(SchoolClass).where(
+                    SchoolClass.batch_id == batch.id,
+                    or_(SchoolClass.folder == class_folder, SchoolClass.name == class_name),
+                )
             )
-            if subject is None:
-                subject = Subject(
-                    class_id=school_class.id,
-                    name=subject_name,
-                    sort_order=s.get("sort_order", 0),
+            if school_class is None:
+                school_class = SchoolClass(
+                    batch_id=batch.id, name=class_name, folder=class_folder, description=c.get("description")
                 )
-                db.add(subject)
+                db.add(school_class)
                 db.flush()
-                print(f"+ subject {school_class.name}/{subject.name}")
-            for ch in s.get("chapters", []):
-                chapter_title = _check_name(ch["title"], "Chapter title")
-                chapter = db.scalar(
-                    select(Chapter).where(Chapter.subject_id == subject.id, Chapter.title == chapter_title)
-                )
-                if chapter is None:
-                    chapter = Chapter(
-                        subject_id=subject.id,
-                        title=chapter_title,
-                        description=ch.get("description"),
-                        sort_order=ch.get("sort_order", 0),
-                        is_published=ch.get("published", False),
+                print(f"+ class {batch.name}/{school_class.name}")
+            for s in c.get("subjects", []):
+                subject_name = _check_name(s["name"], "Subject name", 150)
+                subject_folder = _check_folder(s.get("folder"), subject_name)
+                subject = db.scalar(
+                    select(Subject).where(
+                        Subject.class_id == school_class.id,
+                        or_(Subject.folder == subject_folder, Subject.name == subject_name),
                     )
-                    db.add(chapter)
+                )
+                if subject is None:
+                    subject = Subject(
+                        class_id=school_class.id,
+                        name=subject_name,
+                        folder=subject_folder,
+                        description=s.get("description"),
+                        sort_order=s.get("sort_order", 0),
+                    )
+                    db.add(subject)
                     db.flush()
-                    print(f"+ chapter {subject.name}/{chapter.title}")
-                for v in ch.get("videos", []):
-                    _seed_video(db, chapter, v)
+                    print(f"+ subject {school_class.name}/{subject.name}")
+                for m in s.get("modules", []):
+                    title = _check_name(m["title"], "Module title")
+                    module_folder = _check_folder(m.get("folder"), title)
+                    module = db.scalar(
+                        select(Module).where(
+                            Module.subject_id == subject.id, or_(Module.folder == module_folder, Module.title == title)
+                        )
+                    )
+                    if module is None:
+                        module = Module(
+                            subject_id=subject.id,
+                            title=title,
+                            folder=module_folder,
+                            description=m.get("description"),
+                            sort_order=m.get("sort_order", 0),
+                            is_published=m.get("published", False),
+                        )
+                        db.add(module)
+                        db.flush()
+                        print(f"+ module {subject.name}/{module.title}")
+                    prefix = "/".join(p for p in (batch.folder, school_class.folder, subject.folder, module.folder) if p)
+                    for item in m.get("contents", []):
+                        _seed_content(db, module, item, prefix)
 
     for s in manifest.get("students", []):
         username = s["username"].strip().lower()
@@ -842,33 +750,33 @@ def cmd_seed_demo(db: Session, args: argparse.Namespace) -> None:
     print("Seed complete.")
 
 
-def _seed_video(db: Session, chapter: Chapter, spec: dict) -> None:
-    key = validate_storage_key(spec["storage_key"])
-    if db.scalar(select(Video.id).where(Video.storage_key == key)):
+def _seed_content(db: Session, module: Module, spec: dict, prefix: str) -> None:
+    key = validate_storage_key(spec.get("storage_key") or f"{prefix}/{spec['file']}")
+    if db.scalar(select(Content.id).where(Content.storage_key == key)):
         return
     try:
-        _, meta, problems = inspect_video_file(key)
+        _, info = inspect_content(key)
     except CliError as exc:
-        print(f"! skipped video {key}: {exc}")
+        print(f"! skipped {key}: {exc}")
         return
-    wanted = spec.get("status", VideoStatus.DRAFT.value)
+    wanted = spec.get("status", ContentStatus.DRAFT.value)
     status = wanted
-    if wanted == VideoStatus.PUBLISHED.value and problems:
-        status = VideoStatus.DRAFT.value
-        print(f"! {key} left as draft: {'; '.join(problems)}")
+    if wanted == ContentStatus.PUBLISHED.value and info.problems:
+        status = ContentStatus.DRAFT.value
+        print(f"! {key} left as draft: {'; '.join(info.problems)}")
     db.add(
-        Video(
-            chapter_id=chapter.id,
+        Content(
+            module_id=module.id,
             title=spec["title"],
             description=spec.get("description"),
             storage_key=key,
             sort_order=spec.get("sort_order", 0),
             status=status,
-            **meta,
+            **info.metadata(),
         )
     )
     db.flush()
-    print(f"+ video [{status}] {key}")
+    print(f"+ {info.content_type.value} [{status}] {key}")
 
 
 # --------------------------------------------------------------------------- parser
@@ -884,54 +792,67 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description="Campus LMS admin tool")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("tree", help="show classes, subjects, chapters and videos")
+    p = sub.add_parser("tree", help="show batches, classes, subjects, modules and content")
     p.set_defaults(func=cmd_tree)
 
-    p = sub.add_parser("create-class")
+    p = sub.add_parser("create-batch")
     p.add_argument("name")
+    p.add_argument("--folder", help="folder name under the content root (default: from the name)")
+    p.add_argument("--description")
+    p.set_defaults(func=cmd_create_batch)
+
+    p = sub.add_parser("create-class")
+    p.add_argument("--batch", help="batch name, folder or ID (optional when there is one batch)")
+    p.add_argument("name")
+    p.add_argument("--folder")
     p.add_argument("--description")
     p.set_defaults(func=cmd_create_class)
 
     p = sub.add_parser("create-subject")
-    p.add_argument("--class", dest="class_ref", required=True, help="class name or ID")
+    p.add_argument("--class", dest="class_ref", required=True, help='"Batch/Class", class name or ID')
     p.add_argument("name")
+    p.add_argument("--folder")
     p.add_argument("--sort", type=int, default=0)
     p.set_defaults(func=cmd_create_subject)
 
-    p = sub.add_parser("create-chapter")
-    p.add_argument("--subject", required=True, help='"Class/Subject" or subject ID')
+    p = sub.add_parser("create-module", aliases=["create-chapter"])
+    p.add_argument("--subject", required=True, help='"[Batch/]Class/Subject" or subject ID')
     p.add_argument("title")
+    p.add_argument("--folder")
     p.add_argument("--description")
     p.add_argument("--sort", type=int, default=0)
     p.add_argument("--publish", action="store_true")
-    p.set_defaults(func=cmd_create_chapter)
+    p.set_defaults(func=cmd_create_module)
 
-    for name in ("publish-chapter", "unpublish-chapter"):
-        p = sub.add_parser(name)
-        p.add_argument("chapter", help='"Class/Subject/Chapter" or chapter ID')
-        p.set_defaults(func=cmd_set_chapter_published)
+    for name, alias, value in (
+        ("publish-module", "publish-chapter", True),
+        ("unpublish-module", "unpublish-chapter", False),
+    ):
+        p = sub.add_parser(name, aliases=[alias])
+        p.add_argument("module", help='"[Batch/]Class/Subject/Module" or module ID')
+        p.set_defaults(func=cmd_set_module_published, publish_value=value)
 
     p = sub.add_parser("create-student")
     p.add_argument("--code", required=True, help="student code / ID")
     p.add_argument("--username", required=True)
     p.add_argument("--name", required=True, help="full name")
-    p.add_argument("--class", dest="class_ref", help="class name or ID")
+    p.add_argument("--class", dest="class_ref", help='"Batch/Class", class name or ID')
     _add_password_options(p)
     p.set_defaults(func=cmd_create_student)
 
-    p = sub.add_parser("set-password", help="reset a password and sign the student out")
+    p = sub.add_parser("set-password", help="reset a student's password and sign them out")
     p.add_argument("student", help="username, student code or ID")
     _add_password_options(p)
     p.set_defaults(func=cmd_set_password)
 
-    for name in ("activate-student", "deactivate-student"):
+    for name, value in (("activate-student", True), ("deactivate-student", False)):
         p = sub.add_parser(name)
         p.add_argument("student", help="username, student code or ID")
-        p.set_defaults(func=cmd_set_student_active)
+        p.set_defaults(func=cmd_set_student_active, active_value=value)
 
     p = sub.add_parser("assign-class")
     p.add_argument("student", help="username, student code or ID")
-    p.add_argument("class_ref", metavar="class", help="class name or ID")
+    p.add_argument("class_ref", metavar="class", help='"Batch/Class", class name or ID')
     p.set_defaults(func=cmd_assign_class)
 
     p = sub.add_parser("list-students")
@@ -940,7 +861,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("create-load-students", help="create students load001.. for deploy/scripts/load_test.py")
     p.add_argument("--count", type=int, required=True, help="how many (1-999)")
     p.add_argument("--prefix", default="load")
-    p.add_argument("--class", dest="class_ref", required=True, help="class name or ID")
+    p.add_argument("--class", dest="class_ref", required=True, help='"Batch/Class", class name or ID')
     _add_password_options(p)
     p.set_defaults(func=cmd_create_load_students)
 
@@ -948,35 +869,68 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--prefix", default="load")
     p.set_defaults(func=cmd_delete_load_students)
 
-    p = sub.add_parser("add-video", help="register a file already in VIDEO_ROOT (as draft)")
-    p.add_argument("--chapter", required=True, help='"Class/Subject/Chapter" or chapter ID')
+    p = sub.add_parser("create-staff", help="create a dashboard account (teacher or administrator)")
+    p.add_argument("--username", required=True)
+    p.add_argument("--name", required=True, help="full name")
+    p.add_argument("--role", choices=[r.value for r in StaffRole], default=StaffRole.STAFF.value)
+    _add_password_options(p)
+    p.set_defaults(func=cmd_create_staff)
+
+    p = sub.add_parser("set-staff-password", help="reset a dashboard account's password")
+    p.add_argument("staff", help="username or ID")
+    _add_password_options(p)
+    p.set_defaults(func=cmd_set_staff_password)
+
+    for name, value in (("activate-staff", True), ("deactivate-staff", False)):
+        p = sub.add_parser(name)
+        p.add_argument("staff", help="username or ID")
+        p.set_defaults(func=cmd_set_staff_active, active_value=value)
+
+    p = sub.add_parser("list-staff")
+    p.set_defaults(func=cmd_list_staff)
+
+    p = sub.add_parser("add-content", aliases=["add-video"], help="register a file already in VIDEO_ROOT (as draft)")
+    p.add_argument("--module", "--chapter", dest="module", required=True, help='"[Batch/]Class/Subject/Module" or ID')
     p.add_argument("--storage-key", required=True, help="path relative to VIDEO_ROOT")
     p.add_argument("--title", required=True)
     p.add_argument("--description")
     p.add_argument("--sort", type=int, default=0)
-    p.set_defaults(func=cmd_add_video)
+    p.set_defaults(func=cmd_add_content)
 
-    for name in ("publish-video", "unpublish-video", "archive-video"):
-        p = sub.add_parser(name)
-        p.add_argument("video", help="video ID or storage key")
-        if name == "publish-video":
+    for name, alias, status in (
+        ("publish-content", "publish-video", ContentStatus.PUBLISHED),
+        ("unpublish-content", "unpublish-video", ContentStatus.DRAFT),
+        ("archive-content", "archive-video", ContentStatus.ARCHIVED),
+    ):
+        p = sub.add_parser(name, aliases=[alias])
+        p.add_argument("content", help="content ID or storage key")
+        if status is ContentStatus.PUBLISHED:
             p.add_argument("--force", action="store_true", help="publish even if the file has problems")
-        p.set_defaults(func=cmd_set_video_status, force=False)
+        p.set_defaults(func=cmd_set_content_status, status_value=status.value, force=False)
 
     p = sub.add_parser("check-media", help="verify every registered file exists and is readable")
     p.add_argument("--update", action="store_true", help="refresh size/duration/resolution metadata")
     p.set_defaults(func=cmd_check_media)
 
-    p = sub.add_parser("scan-videos", help="list MP4 files in VIDEO_ROOT that are not registered")
+    p = sub.add_parser("scan-videos", aliases=["scan-content"], help="list content files that are not registered")
     p.set_defaults(func=cmd_scan_videos)
 
     p = sub.add_parser(
         "sync-videos",
-        help="register new MP4 files from the folder layout <class>/<subject>/<chapter>/<video>.mp4",
+        aliases=["sync-content"],
+        help="update the catalogue from the folders <batch>/<class>/<subject>/<module>/<file>",
     )
     p.add_argument("--publish", action="store_true", help="publish new files that pass the check (default: draft)")
-    p.add_argument("--archive-missing", action="store_true", help="archive registered videos whose files are gone")
+    p.add_argument("--archive-missing", action="store_true", help="archive items whose files are gone")
+    p.add_argument(
+        "--allow-mass-archive", action="store_true", help="archive even when more than half the files are missing"
+    )
     p.set_defaults(func=cmd_sync_videos)
+
+    p = sub.add_parser("relocate-content", help="move pre-batch folders into their batch folder (after upgrading)")
+    p.add_argument("--apply", action="store_true", help="move the folders (default: only show what would move)")
+    p.add_argument("--quiet", action="store_true", help="print nothing when there is nothing to do")
+    p.set_defaults(func=cmd_relocate_content)
 
     p = sub.add_parser("inspect-media", help="show MP4 metadata for files (no database needed)")
     p.add_argument("paths", nargs="+")

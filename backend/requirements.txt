@@ -7,3 +7,7 @@ psycopg[binary]==3.3.6
 argon2-cffi==25.1.0
 pydantic==2.14.1
 pydantic-settings==2.16.0
+# Staff web dashboard: templates, form posts, time zones without the OS tz database.
+Jinja2==3.1.6
+python-multipart==0.0.32
+tzdata==2026.5

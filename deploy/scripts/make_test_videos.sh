@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate the demo test videos referenced by backend/seed/demo_catalog.json.
+# Generate the demo files (videos, PDF notes, an image) referenced by backend/seed/demo_catalog.json.
 #
 #   deploy/scripts/make_test_videos.sh /srv/campus-lms/videos          # includes a 32-minute lesson
 #   deploy/scripts/make_test_videos.sh /srv/campus-lms/videos --short  # long lesson cut to 5 minutes
@@ -28,5 +28,5 @@ else
         -v "$OUT:/out" \
         -v "$SCRIPT_DIR:/scripts:ro" \
         alpine:3.22 \
-        sh -c "apk add --no-cache --quiet ffmpeg font-dejavu >/dev/null && sh /scripts/encode_test_videos.sh /out $LONG_SECONDS; rc=\$?; chown -R $HOST_IDS /out/class11 /out/class12 2>/dev/null || true; exit \$rc"
+        sh -c "apk add --no-cache --quiet ffmpeg font-dejavu python3 >/dev/null && sh /scripts/encode_test_videos.sh /out $LONG_SECONDS; rc=\$?; chown -R $HOST_IDS /out/batch-2026-27 2>/dev/null || true; exit \$rc"
 fi

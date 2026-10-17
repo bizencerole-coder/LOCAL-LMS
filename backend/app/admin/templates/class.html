@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, textarea, checkbox, flag_badge, post_button, folder_note, move_buttons, counts as count_badges %}
+{% block title %}{{ school_class.name }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="kicker">{{ icon('cap') }}Class in {{ batch.name }}</p>
+    <h1>{{ school_class.name }} {{ flag_badge(school_class.is_active) }}</h1>
+    {% if school_class.description %}<p class="muted">{{ school_class.description }}</p>{% endif %}
+    {{ folder_note(share, school_class.folder) }}
+  </div>
+  <div class="actions">
+    <a class="btn" href="/admin/students?class_id={{ school_class.id }}">{{ icon('users') }}<span>{{ plural(student_count, 'student') }}</span></a>
+    <a class="btn btn-primary" href="#new-subject">{{ icon('plus') }}<span>New subject</span></a>
+  </div>
+</header>
+
+<section class="card">
+  <h2>{{ icon('book') }}Subjects</h2>
+  {% if subjects %}
+  <table class="table">
+    <thead><tr><th class="narrow">Order</th><th>Subject</th><th>Modules</th><th>Content</th><th>Folder</th><th></th></tr></thead>
+    <tbody>
+    {% for s in subjects %}
+      {% set n = counts.get(s.id, (0, 0, 0, 0)) %}
+      <tr class="{{ '' if s.is_active else 'is-off' }}">
+        <td class="narrow">{{ move_buttons('/admin/subjects/' ~ s.id ~ '/move') }}</td>
+        <td><a href="/admin/subjects/{{ s.id }}"><b>{{ s.name }}</b></a>{% if not s.is_active %} {{ flag_badge(False, no='Hidden') }}{% endif %}</td>
+        <td>{{ modules.get(s.id, 0) }}</td>
+        <td>{{ count_badges(*n) }}</td>
+        <td><code>{{ s.folder }}</code></td>
+        <td class="right"><a class="btn-icon" href="/admin/subjects/{{ s.id }}" title="Open">{{ icon('right') }}</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No subjects in this class yet.</p>
+  {% endif %}
+</section>
+
+<div class="grid-2">
+  <section class="card" id="new-subject">
+    <h2>{{ icon('plus') }}New subject</h2>
+    <form method="post" action="/admin/classes/{{ school_class.id }}/subjects">
+      {{ csrf() }}
+      {{ field('name', 'Name', required=True, maxlength=150, placeholder='Physics') }}
+      {{ field('folder', 'Folder name', maxlength=100, hint='Optional; made from the name (e.g. physics).', pattern='[A-Za-z0-9][A-Za-z0-9._-]*') }}
+      {{ textarea('description', 'Description', rows=2) }}
+      <button class="btn btn-primary" type="submit">{{ icon('plus') }}<span>Create subject</span></button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>{{ icon('edit') }}Class settings</h2>
+    <form method="post" action="/admin/classes/{{ school_class.id }}">
+      {{ csrf() }}
+      {{ field('name', 'Name', school_class.name, required=True, maxlength=100) }}
+      {{ textarea('description', 'Description', school_class.description, rows=2) }}
+      {{ field('sort_order', 'Order', school_class.sort_order, type='number') }}
+      {{ checkbox('is_active', 'Active', school_class.is_active, hint='Students of an inactive class see no content.') }}
+      <button class="btn btn-primary" type="submit">{{ icon('check') }}<span>Save</span></button>
+    </form>
+    <div class="danger-zone">
+      {{ post_button('/admin/classes/' ~ school_class.id ~ '/delete', 'Delete class', 'trash', 'btn btn-danger', confirm='Delete ' ~ school_class.name ~ '? Only classes without subjects and students can be deleted.') }}
+    </div>
+  </section>
+</div>
+{% endblock %}

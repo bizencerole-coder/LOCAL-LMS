@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, checkbox %}
+{% block title %}Folder sync{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Folder sync</h1>
+    <p class="muted">Files copied into the content share are added automatically every 5 minutes. Folders follow the content tree:
+      <code>{{ share }}{{ '\\' if '\\' in share else '/' }}&lt;batch&gt;{{ '\\' if '\\' in share else '/' }}&lt;class&gt;{{ '\\' if '\\' in share else '/' }}&lt;subject&gt;{{ '\\' if '\\' in share else '/' }}&lt;module&gt;{{ '\\' if '\\' in share else '/' }}file</code>.
+      Each item's page shows its folder. Moving or renaming files keeps students' progress.</p>
+  </div>
+</header>
+
+<section class="card">
+  <h2>{{ icon('sync') }}Run now</h2>
+  <form method="post" action="/admin/sync" class="row-form wrap">
+    {{ csrf() }}
+    {{ checkbox('publish', 'Publish new files that pass the check', True) }}
+    {{ checkbox('archive_missing', 'Archive items whose files were removed', True) }}
+    <button class="btn btn-primary" type="submit">{{ icon('sync') }}<span>Sync now</span></button>
+  </form>
+</section>
+
+<div class="grid-2 wide-right">
+  <section class="card">
+    <h2>{{ icon('clock') }}Recent runs</h2>
+    {% if runs %}
+    <ul class="list compact">
+      {% for r in runs %}
+      <li><a href="/admin/sync?run={{ r.id }}" class="{{ 'selected' if selected and r.id == selected.id else '' }}">
+        {{ icon('alert' if r.problems else 'check') }}
+        <span class="grow"><b>{{ r.started_at | time }}</b><small>{{ 'Dashboard' if r.trigger == 'dashboard' else 'Automatic / CLI' }} · {{ r.registered }} added · {{ r.moved }} moved · {{ r.archived }} archived{% if r.problems %} · {{ r.problems }} problem(s){% endif %}</small></span></a></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No runs yet.</p>
+    {% endif %}
+  </section>
+  <section class="card">
+    <h2>{{ icon('file') }}Report{% if selected %} <span class="muted small">{{ selected.started_at | time }}</span>{% endif %}</h2>
+    {% if selected %}<pre class="report">{{ selected.report }}</pre>{% else %}<p class="muted">Select a run.</p>{% endif %}
+  </section>
+</div>
+{% endblock %}

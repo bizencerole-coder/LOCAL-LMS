@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon %}
+{% block title %}Sign in{% endblock %}
+{% block bare %}
+<div class="login-wrap">
+  <form class="login card" method="post" action="/admin/login">
+    <div class="login-head">
+      <span class="brand-mark big">{{ icon('cap') }}</span>
+      <h1>Campus LMS</h1>
+      <p class="muted">Staff dashboard: batches, classes, subjects, modules and content.</p>
+    </div>
+    {% if flash %}<div class="flash flash-{{ flash.level }}">{{ flash.text }}</div>{% endif %}
+    {% if error %}<div class="flash flash-error" role="alert">{{ icon('alert') }}<span>{{ error }}</span></div>{% endif %}
+    <input type="hidden" name="next" value="{{ next }}">
+    <label class="field"><span class="field-label">Username</span>
+      <input name="username" value="{{ username or '' }}" autocomplete="username" required autofocus maxlength="100"></label>
+    <label class="field"><span class="field-label">Password</span>
+      <input name="password" type="password" autocomplete="current-password" required maxlength="256"></label>
+    <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+    <p class="hint center">Students use the tablet app. Staff accounts are created by an administrator.</p>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% from "_macros.html" import icon, csrf %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{% block title %}Dashboard{% endblock %} · Campus LMS</title>
+  <link rel="icon" href="/admin/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/admin/static/admin.css">
+  <script src="/admin/static/admin.js" defer></script>
+</head>
+<body>
+{% include "_icons.html" %}
+{% if staff %}
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand" href="/admin/">
+      <span class="brand-mark">{{ icon('cap') }}</span>
+      <span class="brand-text">Campus LMS<small>Staff dashboard</small></span>
+    </a>
+    <nav class="nav">
+      <a href="/admin/" class="{{ 'active' if active == 'dashboard' else '' }}">{{ icon('dashboard') }}Dashboard</a>
+      <a href="/admin/batches" class="{{ 'active' if active == 'content' else '' }}">{{ icon('layers') }}Content</a>
+      <a href="/admin/students" class="{{ 'active' if active == 'students' else '' }}">{{ icon('users') }}Students</a>
+      <a href="/admin/sync" class="{{ 'active' if active == 'sync' else '' }}">{{ icon('sync') }}Folder sync</a>
+      {% if staff.is_admin %}<a href="/admin/staff" class="{{ 'active' if active == 'staff' else '' }}">{{ icon('shield') }}Staff</a>{% endif %}
+    </nav>
+    <div class="sidebar-foot">
+      <a href="/admin/account" class="me {{ 'active' if active == 'account' else '' }}">{{ icon('user') }}<span>{{ staff.full_name }}<small>{{ 'Administrator' if staff.is_admin else 'Staff' }}</small></span></a>
+      <form method="post" action="/admin/logout">{{ csrf() }}<button type="submit" class="btn-link">{{ icon('logout') }}Sign out</button></form>
+    </div>
+  </aside>
+  <main class="main">
+    {% if crumbs %}
+    <nav class="crumbs" aria-label="Breadcrumb">
+      {% for label, url in crumbs %}{% if not loop.last %}<a href="{{ url }}">{{ label }}</a>{{ icon('right') }}{% else %}<span>{{ label }}</span>{% endif %}{% endfor %}
+    </nav>
+    {% endif %}
+    {% if flash %}<div class="flash flash-{{ flash.level }}" role="status">{{ icon('check' if flash.level == 'success' else 'alert') }}<span>{{ flash.text }}</span></div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% else %}
+{% block bare %}{% endblock %}
+{% endif %}
+</body>
+</html>

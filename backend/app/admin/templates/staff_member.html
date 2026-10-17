@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, checkbox, flag_badge %}
+{% block title %}{{ member.full_name }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="kicker"><a href="/admin/staff">{{ icon('shield') }}Staff</a></p>
+    <h1>{{ member.full_name }} {{ flag_badge(member.is_active) }}</h1>
+    <p class="muted"><code>{{ member.username }}</code> · last sign-in {{ member.last_login_at | ago }}</p>
+  </div>
+</header>
+<div class="grid-2">
+  <section class="card">
+    <h2>{{ icon('edit') }}Account</h2>
+    <form method="post" action="/admin/staff/{{ member.id }}">
+      {{ csrf() }}
+      {{ field('full_name', 'Full name', member.full_name, required=True, maxlength=200) }}
+      <label class="field"><span class="field-label">Role</span>
+        <select name="role">
+          <option value="staff"{% if not member.is_admin %} selected{% endif %}>Staff (content and students)</option>
+          <option value="admin"{% if member.is_admin %} selected{% endif %}>Administrator (also staff accounts)</option>
+        </select></label>
+      {{ checkbox('is_active', 'Active', member.is_active, hint='An inactive account cannot sign in.') }}
+      <button class="btn btn-primary" type="submit">{{ icon('check') }}<span>Save</span></button>
+    </form>
+  </section>
+  <section class="card">
+    <h2>{{ icon('key') }}Reset password</h2>
+    <form method="post" action="/admin/staff/{{ member.id }}/password">
+      {{ csrf() }}
+      {{ field('password', 'New password', type='password', required=True, hint='At least 8 characters.', autocomplete='new-password') }}
+      {{ field('password_confirm', 'Repeat password', type='password', required=True, autocomplete='new-password') }}
+      <button class="btn" type="submit">{{ icon('key') }}<span>Set password</span></button>
+    </form>
+  </section>
+</div>
+{% endblock %}

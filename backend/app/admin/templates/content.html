@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, textarea, status_badge, type_icon, post_button, folder_note %}
+{% block title %}{{ content.title }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="kicker">{{ type_icon(content.content_type) }}{{ TYPE_LABELS.get(content.content_type, content.content_type) }} in {{ subject.name }} › {{ module.title }}</p>
+    <h1>{{ content.title }} {{ status_badge(content.status) }}</h1>
+    {{ folder_note(share) }}
+  </div>
+  <div class="actions">
+    {% if content.status != 'published' %}
+      {{ post_button('/admin/contents/' ~ content.id ~ '/status', 'Publish', 'eye', 'btn btn-primary', extra={'status': 'published'}) }}
+    {% else %}
+      {{ post_button('/admin/contents/' ~ content.id ~ '/status', 'Unpublish', 'eye-off', 'btn', extra={'status': 'draft'}) }}
+    {% endif %}
+    {% if content.status != 'archived' %}
+      {{ post_button('/admin/contents/' ~ content.id ~ '/status', 'Archive', 'archive', 'btn', extra={'status': 'archived'}, confirm='Archive ' ~ content.title ~ '? It is hidden from students; the file and progress are kept.') }}
+    {% endif %}
+  </div>
+</header>
+
+{% if not exists %}
+<div class="flash flash-error">{{ icon('alert') }}<span>The file is missing from the content folder. Students get an error when they open this item. Upload it again or copy it back to <code>{{ share }}</code>.</span></div>
+{% elif problems %}
+<div class="flash flash-warning">{{ icon('alert') }}<span>{{ problems | join(' ') }}</span>
+  {% if content.status != 'published' %}{{ post_button('/admin/contents/' ~ content.id ~ '/status', 'Publish anyway', None, 'btn btn-small', extra={'status': 'published', 'force': '1'}, confirm='Publish although the file has problems?') }}{% endif %}
+</div>
+{% endif %}
+
+<div class="grid-2 wide-left">
+  <section class="card preview">
+    {% if preview %}
+      {% if content.content_type == 'video' %}
+        <video controls preload="metadata" src="{{ preview }}"></video>
+      {% elif content.content_type == 'image' %}
+        <img src="{{ preview }}" alt="{{ content.title }}">
+      {% elif content.content_type == 'pdf' %}
+        <iframe src="{{ preview }}" title="{{ content.title }}"></iframe>
+      {% endif %}
+      <p class="hint"><a href="{{ preview }}" target="_blank" rel="noopener">Open in a new tab</a> · preview link valid for one hour</p>
+    {% else %}
+      <div class="empty">{{ icon('alert') }}<p>No preview: the file is missing.</p></div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>{{ icon('edit') }}Details</h2>
+    <form method="post" action="/admin/contents/{{ content.id }}">
+      {{ csrf() }}
+      {{ field('title', 'Title', content.title, required=True, maxlength=200) }}
+      {{ textarea('description', 'Description', content.description, rows=3, hint='Shown to students under the title.') }}
+      <label class="field"><span class="field-label">Module</span>
+        <select name="module_id">
+          {% for module_id, module_title, subject_name in targets %}
+          <option value="{{ module_id }}"{% if module_id == content.module_id %} selected{% endif %}>{{ subject_name }} › {{ module_title }}</option>
+          {% endfor %}
+        </select>
+        <span class="hint">Choosing another module moves the file into that module's folder. Students keep their progress.</span>
+      </label>
+      <button class="btn btn-primary" type="submit">{{ icon('check') }}<span>Save</span></button>
+    </form>
+    <dl class="facts">
+      <dt>Type</dt><dd>{{ TYPE_LABELS.get(content.content_type, content.content_type) }} ({{ content.mime_type }})</dd>
+      {% if content.duration_seconds %}<dt>Length</dt><dd>{{ content.duration_seconds | duration }}</dd>{% endif %}
+      {% if content.resolution_height %}<dt>Size</dt><dd>{{ content.resolution_width }} × {{ content.resolution_height }}</dd>{% endif %}
+      <dt>File size</dt><dd>{{ content.file_size_bytes | size }}</dd>
+      <dt>Students</dt><dd>{{ viewers }} opened · {{ completed }} completed</dd>
+      <dt>Added</dt><dd>{{ content.created_at | time }}</dd>
+      <dt>File</dt><dd><code class="wrap">{{ content.storage_key }}</code></dd>
+    </dl>
+    <div class="danger-zone">
+      {{ post_button('/admin/contents/' ~ content.id ~ '/delete', 'Delete', 'trash', 'btn btn-danger', confirm='Delete ' ~ content.title ~ '? Students lose their progress on it. The file is kept in .trash for 30 days.') }}
+    </div>
+  </section>
+</div>
+{% endblock %}

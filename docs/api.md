@@ -2,12 +2,13 @@
 
 Base: `http://<server>` through Nginx. Interactive docs: `http://<server>/docs`
 (disable with `ENABLE_API_DOCS=false`). All `/api/v1` routes except login need
-`Authorization: Bearer <access_token>`.
+`Authorization: Bearer <access_token>`. This is the student app's API; the staff
+dashboard is described at the end.
 
 Errors always look like:
 
 ```json
-{"error": {"code": "not_found", "message": "This lesson is not available."}, "request_id": "4f9c…"}
+{"error": {"code": "not_found", "message": "This item is not available."}, "request_id": "4f9c…"}
 ```
 
 | Status | `code` | When |
@@ -19,7 +20,7 @@ Errors always look like:
 | 404 | `not_found` | Item does not exist **or** the student may not see it |
 | 422 | `validation_error` | Bad request body; `error.fields` lists problems. Numbers must be JSON numbers (not strings or booleans) |
 | 429 | — (Nginx) | More than 10 login attempts/min from one IP |
-| 503 | `media_unavailable` | Lesson is published but its file is missing or unreadable |
+| 503 | `media_unavailable` | The item is published but its file is missing or unreadable |
 | 503 | `service_busy` | Too many requests in flight on the server; `Retry-After: 2`. The app's progress saver retries on its own |
 | 500 | `internal_error` | Unexpected error; the `request_id` is in the API log with the traceback |
 
@@ -48,7 +49,7 @@ handles them by status code.
   "access_token": "…",
   "token_type": "bearer",
   "expires_in": 28800,
-  "student": {"id": "uuid", "full_name": "Demo Student", "class_name": "Class 12"}
+  "student": {"id": "uuid", "full_name": "Demo Student", "class_name": "Class 12", "batch_name": "Batch 2026-27"}
 }
 ```
 
@@ -56,64 +57,78 @@ handles them by status code.
 
 `GET /api/v1/me`
 ```json
-{"id": "uuid", "student_code": "DEMO-12-001", "username": "demo.student",
- "full_name": "Demo Student", "class": {"id": "uuid", "name": "Class 12"}}
+{"id": "uuid", "student_code": "DEMO-12-001", "username": "demo.student", "full_name": "Demo Student",
+ "class": {"id": "uuid", "name": "Class 12"}, "batch": {"id": "uuid", "name": "Batch 2026-27"}}
 ```
 
 ## Catalogue
 
+A student sees the subjects of their own class while the class and its batch are active,
+the published modules of active subjects, and the published items in them.
+
 `GET /api/v1/subjects`
 ```json
-[{"id": "uuid", "name": "Computer Science", "sort_order": 1, "chapter_count": 1, "video_count": 2}]
+[{"id": "uuid", "name": "Computer Science", "description": null, "sort_order": 1,
+  "module_count": 1, "content_count": 3, "video_count": 2, "notes_count": 1, "image_count": 0,
+  "chapter_count": 1}]
 ```
+(`chapter_count` equals `module_count`, for app 1.0.)
 
-`GET /api/v1/subjects/{subject_id}/chapters`
+`GET /api/v1/subjects/{subject_id}/modules`
 ```json
-[{"id": "uuid", "subject_id": "uuid", "title": "Python Basics", "description": null,
-  "sort_order": 1, "video_count": 2}]
+[{"id": "uuid", "subject_id": "uuid", "title": "Python Basics", "description": null, "sort_order": 1,
+  "content_count": 3, "video_count": 2, "notes_count": 1, "image_count": 0}]
 ```
 
-`GET /api/v1/chapters/{chapter_id}/videos`
+`GET /api/v1/modules/{module_id}/contents`
 ```json
-[{"id": "uuid", "chapter_id": "uuid", "title": "Lesson 2: Python Functions", "description": null,
-  "duration_seconds": 480, "sort_order": 2,
-  "progress": {"video_id": "uuid", "position_seconds": 120, "duration_seconds": 480,
-               "is_completed": false, "last_watched_at": "2026-10-15T14:30:00Z"}}]
+[{"id": "uuid", "module_id": "uuid", "type": "video", "title": "Lesson 2: Python Functions",
+  "description": null, "sort_order": 2, "duration_seconds": 480, "file_size_bytes": 74198955,
+  "progress": {"content_id": "uuid", "position_seconds": 120, "duration_seconds": 480,
+               "is_completed": false, "last_watched_at": "2026-10-15T14:30:00Z"}},
+ {"id": "uuid", "module_id": "uuid", "type": "pdf", "title": "Python Basics: Notes", "description": null,
+  "sort_order": 5, "duration_seconds": null, "file_size_bytes": 2150, "progress": null}]
 ```
-`progress` is `null` for lessons not started. Storage paths are never returned.
+`type` is `video`, `pdf` (shown as *Notes*) or `image`; apps should treat other values as
+an item they cannot open. `progress` is `null` for items not started. Storage paths are never returned.
 
-`GET /api/v1/videos/{video_id}` — one lesson, plus `chapter_title`, `subject_id`, `subject_name`.
+`GET /api/v1/contents/{content_id}` — one item, plus `module_title`, `subject_id`, `subject_name`.
 
-`GET /api/v1/me/recent?limit=10&include_completed=true` — recently watched lessons that
-are still available, newest first:
+`GET /api/v1/me/continue?limit=10&include_completed=false` — recently watched or opened
+items that are still available, newest first. `include_completed=false` gives the videos
+in progress (*Continue watching*); `true` everything recent (*My Learning*):
 ```json
-[{"video": {…VideoOut…}, "chapter_title": "Python Basics", "subject_name": "Computer Science"}]
+[{"content": {…ContentOut…}, "module_title": "Python Basics", "subject_name": "Computer Science"}]
 ```
 
-## Playback
+## Opening an item
 
-`POST /api/v1/videos/{video_id}/playback`
+`POST /api/v1/contents/{content_id}/open`
 ```json
 {
-  "video_id": "uuid",
+  "content_id": "uuid",
+  "type": "video",
   "title": "Lesson 2: Python Functions",
-  "playback_url": "http://192.168.10.10/media/class12/computer-science/01-python-basics/02-python-functions.mp4?expires=1792076400&sid=…&md5=…",
+  "url": "http://192.168.10.10/media/batch-2026-27/class12/computer-science/01-python-basics/02-python-functions.mp4?expires=1792076400&sid=…&md5=…",
   "expires_at": "2026-10-15T16:00:00Z",
-  "duration_seconds": 480,
   "mime_type": "video/mp4",
+  "duration_seconds": 480,
+  "file_size_bytes": 74198955,
   "resume_position_seconds": 120,
   "is_completed": false
 }
 ```
 
-Fetch `playback_url` directly (no Authorization header needed). Nginx answers `HEAD`,
-`GET` and `Range` (206). 403 = bad signature, 410 = expired → request a new URL.
+Fetch `url` directly (no Authorization header needed). Nginx answers `HEAD`, `GET` and
+`Range` (206) with the file's type (`video/mp4`, `application/pdf`, `image/jpeg|png|webp`).
+403 = bad signature, 410 = expired → open the item again for a new URL. Opening notes or
+an image records it as viewed (it then counts as completed and appears in *My Learning*).
 
 ## Progress
 
-`GET /api/v1/videos/{video_id}/progress` → progress object (position 0 if never watched).
+`GET /api/v1/contents/{content_id}/progress` → progress object (position 0 if never watched).
 
-`PUT /api/v1/videos/{video_id}/progress`
+`PUT /api/v1/contents/{content_id}/progress`
 ```json
 {"position_seconds": 765, "duration_seconds": 1200, "is_completed": false}
 ```
@@ -121,5 +136,25 @@ Upserts; safe to retry (retries never create a second row). The student comes fr
 token (a `student_id` in the body is ignored). Position is clamped to the duration;
 `is_completed` becomes true when the position reaches `COMPLETION_THRESHOLD` × duration
 (seeking there counts) or when sent as true, and then stays true. The response is this
-request's own result. Concurrent saves for the same student and lesson (two devices) are
+request's own result. Concurrent saves for the same student and item (two devices) are
 last-writer-wins.
+
+## Endpoints for app 1.0 (deprecated)
+
+App 1.0 browses chapters and videos. These endpoints still work, on the same data, and
+only ever return video items: `GET /api/v1/subjects/{id}/chapters` (modules),
+`GET /api/v1/chapters/{id}/videos`, `GET /api/v1/videos/{id}`, `GET /api/v1/me/recent`,
+`POST /api/v1/videos/{id}/playback` (returns `playback_url`), and
+`GET|PUT /api/v1/videos/{id}/progress` (objects carry `video_id`). They will be removed once
+every tablet runs app 1.1.
+
+## Staff dashboard
+
+`/admin/` is a server-rendered web application for staff (HTML pages, not a JSON API):
+sign-in at `/admin/login` sets an HttpOnly, SameSite=Strict session cookie scoped to
+`/admin`; every form post carries a CSRF token and is checked against the `Origin` header;
+pages are sent with a strict Content-Security-Policy. File uploads go to
+`PUT /admin/upload/{module_id}?filename=…&publish=true` with the raw file as the body and
+the CSRF token in `X-CSRF-Token`; the response is `{"ok": true, "id": …, "type": …, "status": …, "problems": […]}`
+or `{"ok": false, "error": "…"}`. Media previews for staff use the same signed `/media/` URLs
+with `sid=staff-<id>`.

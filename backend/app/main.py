@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.staticfiles import StaticFiles
 
@@ -17,6 +18,7 @@ from . import __version__
 from .config import get_settings
 from .errors import install_error_handlers, internal_error_response, service_busy_response
 from .logging_config import configure_logging, log_event, request_id_var
+from .admin import install_admin
 from .routers import auth, catalog, health, playback, progress
 
 access_logger = logging.getLogger("app.access")
@@ -67,7 +69,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Campus LMS API",
         version=__version__,
-        description="Local campus video-learning API. Video bytes are served by Nginx.",
+        description="Local campus learning API (student app) and staff dashboard (/admin). Files are served by Nginx.",
         docs_url=None,
         redoc_url=None,
         openapi_url="/openapi.json" if settings.enable_api_docs else None,
@@ -126,6 +128,7 @@ def create_app() -> FastAPI:
                 duration_ms=round((time.perf_counter() - started) * 1000, 1),
                 client=request.client.host if request.client else "-",
                 student_id=getattr(request.state, "student_id", "-"),
+                staff_id=getattr(request.state, "staff_id", "-"),
             )
             request_id_var.reset(token)
 
@@ -134,6 +137,13 @@ def create_app() -> FastAPI:
     app.include_router(catalog.router)
     app.include_router(playback.router)
     app.include_router(progress.router)
+    install_admin(app)
+
+    @app.get("/", include_in_schema=False)
+    async def root():
+        # Staff typing the server address into a browser land on the dashboard.
+        return RedirectResponse("/admin/", status_code=303)
+
     return app
 
 
