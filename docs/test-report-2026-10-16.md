@@ -120,6 +120,26 @@ After the server was switched on, `git pull` (to `d54df17`) and
 | First administrator | `admin` created; the user typed the password in a terminal tab |
 | Tablet | realme Pad 2 updated to app 1.1.0 with `adb install -r`; yesterday's 8-hour sign-in had expired, so the user signed in again as `demo.student`. Home shows *Batch 2026-27 · Class 12*, Continue watching with yesterday's resume points kept (*Python Tutorial* 0:11, *Lesson 1* 0:20), subjects with counts and progress; Python Basics lists the three videos and the notes; the notes open as PDF pages (*Page 1 of 3*) from the campus server |
 
+### Dashboard buttons refused (17 Oct 2026, reported by the user)
+
+Deleting an item on the campus dashboard answered *Not allowed: This form has expired*.
+Cause: the templates imported the form helpers from `_macros.html` without the template
+context, so the hidden `csrf_token` in every form was empty and every button (save, publish,
+delete, sign out…) was refused. Uploads still worked because the upload script sends the
+token from the page's `<meta>` tag, and the tests and the scripted checks above posted that
+same token instead of the one in the form, so they passed.
+
+Fix (`b59fb10`): every template imports the helpers `with context`; new tests submit the
+hidden fields each form actually renders (every form on 13 pages carries the page's token;
+publish, delete and sign-out succeed with them) and fail on the old templates. Backend tests
+**138 passed**; Publish and Unpublish clicked in the browser on the local stack.
+
+Deployed to the campus server at ~10:10 with `git pull` and `upgrade.sh --no-pull`:
+**UPGRADE COMPLETE**, all containers healthy; a page rendered inside the server's API
+container carries the token in both of its forms; the API (uid 1000 / gid 100, owner of the
+content folder) can write all 10 content folders, so a delete can move the file into
+`.trash`. Pages opened before the upgrade still hold the empty token and must be reloaded.
+
 ## Review findings and fixes
 
 A multi-agent code review (6 reviewers + adversarial verification) and a live probe of the
