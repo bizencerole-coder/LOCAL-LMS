@@ -34,7 +34,9 @@ inside the backup directory (the account cannot write to `/var/log`):
 30 18 * * * cd /home/lmsadmin/campus-lms/deploy && BACKUP_DIR=/srv/backups/lms scripts/backup.sh >> /srv/backups/lms/backup.log 2>&1
 ```
 
-Check `backup.log` and the newest dump's timestamp after the first night.
+Pick a time when the server is on: a server that is switched off at night never runs a
+night-time job (the campus server uses `0 13 * * *`, 1 PM server time). Check `backup.log`
+and the newest dump's timestamp after the first run.
 
 Copy backups off the LMS host (another disk or machine) — a backup on the same disk does
 not survive a disk failure.

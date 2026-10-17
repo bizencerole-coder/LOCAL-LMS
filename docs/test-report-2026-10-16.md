@@ -120,6 +120,16 @@ After the server was switched on, `git pull` (to `d54df17`) and
 | First administrator | `admin` created; the user typed the password in a terminal tab |
 | Tablet | realme Pad 2 updated to app 1.1.0 with `adb install -r`; yesterday's 8-hour sign-in had expired, so the user signed in again as `demo.student`. Home shows *Batch 2026-27 · Class 12*, Continue watching with yesterday's resume points kept (*Python Tutorial* 0:11, *Lesson 1* 0:20), subjects with counts and progress; Python Basics lists the three videos and the notes; the notes open as PDF pages (*Page 1 of 3*) from the campus server |
 
+### Daily backup scheduled (17 Oct 2026, ~11:20)
+
+With the user's approval, `lmsadmin`'s crontab on the campus server now runs
+`BACKUP_DIR=/srv/backups/lms scripts/backup.sh` at 13:00 every day (server clock: IST, NTP
+synchronised), next to the 5-minute folder sync; the crontab before the change is saved in
+`/srv/backups/lms/crontab.before-*`. A run of the exact job in cron's minimal environment
+wrote a valid database dump (`PGDMP` header, 12 tables with data) and the configuration
+archive. Not covered: the video files (keep the originals or add an OMV rsync job to another
+disk), and copies off the server's disk (copy to a USB drive regularly).
+
 ### Dashboard buttons refused (17 Oct 2026, reported by the user)
 
 Deleting an item on the campus dashboard answered *Not allowed: This form has expired*.
