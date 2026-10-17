@@ -13,6 +13,7 @@ from urllib.parse import quote
 from ..errors import internal_error_response
 from ..logging_config import log_event
 from .auth import Forbidden, LoginRequired
+from .news import router as news_router
 from .upload import router as upload_router
 from .views import router as views_router
 from .web import PERMISSION_HELP, FormError, NotFound, back, redirect, render
@@ -29,6 +30,7 @@ def install_admin(app: FastAPI) -> None:
     app.mount("/admin/static", StaticFiles(directory=STATIC_DIR), name="admin-static")
     app.include_router(upload_router)
     app.include_router(views_router)
+    app.include_router(news_router)
 
     @app.exception_handler(LoginRequired)
     async def _login_required(request: Request, exc: LoginRequired):

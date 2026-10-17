@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, textarea, checkbox, post_button, grouped_select, notice_badge with context %}
+{% block title %}{{ notice.title }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="kicker">{{ icon('bell') }}Notice</p>
+    <h1>{{ notice.title }} {{ notice_badge(status) }}</h1>
+    <p class="muted">{% if notice.published_at %}Published {{ notice.published_at | time }}{% else %}Draft: students don't see it yet{% endif %}{% if notice.expires_at %} · shown until {{ notice.expires_at | until }}{% endif %}</p>
+  </div>
+  <div class="actions">
+    {% if status == 'draft' %}{{ post_button('/admin/notices/' ~ notice.id ~ '/publish', 'Publish', 'eye', 'btn btn-primary', extra={'publish': '1'}) }}
+    {% else %}{{ post_button('/admin/notices/' ~ notice.id ~ '/publish', 'Unpublish', 'eye-off', 'btn') }}{% endif %}
+  </div>
+</header>
+
+<section class="card">
+  <h2>{{ icon('edit') }}Edit</h2>
+  <form method="post" action="/admin/notices/{{ notice.id }}" class="form-grid">
+    {{ csrf() }}
+    {{ field('title', 'Title', notice.title, required=True, maxlength=200) }}
+    {{ grouped_select('audience', 'For', audiences, audience) }}
+    {{ textarea('body', 'Message', notice.body, rows=6) }}
+    {{ field('expires_on', 'Show until', notice.expires_at | date_value(True), type='date', hint='Optional: the notice disappears after this day.') }}
+    {{ checkbox('is_important', 'Important', notice.is_important, hint='Highlighted and kept at the top.') }}
+    <div class="form-actions"><button class="btn btn-primary" type="submit">{{ icon('check') }}<span>Save</span></button></div>
+  </form>
+  <div class="danger-zone">
+    {{ post_button('/admin/notices/' ~ notice.id ~ '/delete', 'Delete notice', 'trash', 'btn btn-danger', confirm='Delete the notice ' ~ notice.title ~ '?') }}
+  </div>
+</section>
+{% endblock %}

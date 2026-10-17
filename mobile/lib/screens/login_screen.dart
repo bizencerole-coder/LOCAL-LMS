@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../state/app_state.dart';
+import '../theme.dart';
+import '../widgets/brand.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -17,6 +19,13 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _busy = false;
   bool _obscure = true;
   ApiException? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // The school's name, logo and colour, before anyone signs in.
+    WidgetsBinding.instance.addPostFrameCallback((_) => AppScope.read(context).refreshSchool());
+  }
 
   @override
   void dispose() {
@@ -53,90 +62,181 @@ class _LoginScreenState extends State<LoginScreen> {
     if (updated != null) {
       await state.setServerUrl(updated);
       setState(() => _error = null);
+      await state.refreshSchool();
     }
+  }
+
+  Widget _form(BuildContext context) {
+    final theme = Theme.of(context);
+    final state = AppScope.of(context);
+    return AutofillGroup(
+      child: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Welcome back', style: theme.textTheme.headlineMedium),
+            const SizedBox(height: 6),
+            Text('Sign in with your username or student ID.',
+                style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+            const SizedBox(height: 28),
+            TextFormField(
+              controller: _username,
+              enabled: !_busy,
+              autofillHints: const [AutofillHints.username],
+              textInputAction: TextInputAction.next,
+              autocorrect: false,
+              decoration: const InputDecoration(
+                labelText: 'Username or student ID',
+                prefixIcon: Icon(Icons.person_outline_rounded),
+              ),
+              validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter your username' : null,
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _password,
+              enabled: !_busy,
+              obscureText: _obscure,
+              autofillHints: const [AutofillHints.password],
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => _submit(),
+              decoration: InputDecoration(
+                labelText: 'Password',
+                prefixIcon: const Icon(Icons.lock_outline_rounded),
+                suffixIcon: IconButton(
+                  tooltip: _obscure ? 'Show password' : 'Hide password',
+                  icon: Icon(_obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                  onPressed: () => setState(() => _obscure = !_obscure),
+                ),
+              ),
+              validator: (v) => (v == null || v.isEmpty) ? 'Enter your password' : null,
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 16),
+              _ErrorBanner(error: _error!),
+            ],
+            const SizedBox(height: 24),
+            FilledButton(
+              onPressed: _busy ? null : _submit,
+              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(54)),
+              child: _busy
+                  ? const SizedBox.square(dimension: 24, child: CircularProgressIndicator(strokeWidth: 3))
+                  : const Text('Sign in'),
+            ),
+            const SizedBox(height: 24),
+            Center(
+              child: TextButton.icon(
+                onPressed: _busy ? null : _editServer,
+                icon: const Icon(Icons.dns_outlined, size: 18),
+                label: Text('Server: ${state.serverUrl}'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final state = AppScope.of(context);
-    return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 420),
-              child: AutofillGroup(
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Icon(Icons.school_rounded, size: 64, color: theme.colorScheme.primary),
-                      const SizedBox(height: 12),
-                      Text('Campus LMS', textAlign: TextAlign.center, style: theme.textTheme.headlineMedium),
-                      const SizedBox(height: 4),
-                      Text('Sign in for your videos and notes',
-                          textAlign: TextAlign.center, style: theme.textTheme.bodyMedium),
-                      const SizedBox(height: 32),
-                      TextFormField(
-                        controller: _username,
-                        enabled: !_busy,
-                        autofillHints: const [AutofillHints.username],
-                        textInputAction: TextInputAction.next,
-                        autocorrect: false,
-                        decoration: const InputDecoration(
-                          labelText: 'Username or student ID',
-                          prefixIcon: Icon(Icons.person_outline),
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter your username' : null,
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _password,
-                        enabled: !_busy,
-                        obscureText: _obscure,
-                        autofillHints: const [AutofillHints.password],
-                        textInputAction: TextInputAction.done,
-                        onFieldSubmitted: (_) => _submit(),
-                        decoration: InputDecoration(
-                          labelText: 'Password',
-                          prefixIcon: const Icon(Icons.lock_outline),
-                          border: const OutlineInputBorder(),
-                          suffixIcon: IconButton(
-                            tooltip: _obscure ? 'Show password' : 'Hide password',
-                            icon: Icon(_obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined),
-                            onPressed: () => setState(() => _obscure = !_obscure),
-                          ),
-                        ),
-                        validator: (v) => (v == null || v.isEmpty) ? 'Enter your password' : null,
-                      ),
-                      if (_error != null) ...[
-                        const SizedBox(height: 16),
-                        _ErrorBanner(error: _error!),
-                      ],
-                      const SizedBox(height: 24),
-                      FilledButton(
-                        onPressed: _busy ? null : _submit,
-                        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-                        child: _busy
-                            ? const SizedBox.square(dimension: 24, child: CircularProgressIndicator(strokeWidth: 3))
-                            : const Text('Sign in'),
-                      ),
-                      const SizedBox(height: 32),
-                      TextButton.icon(
-                        onPressed: _busy ? null : _editServer,
-                        icon: const Icon(Icons.dns_outlined, size: 18),
-                        label: Text('Server: ${state.serverUrl}'),
-                      ),
-                    ],
-                  ),
+    final wide = MediaQuery.sizeOf(context).width >= 840;
+    final form = ConstrainedBox(constraints: const BoxConstraints(maxWidth: 440), child: _form(context));
+    if (wide) {
+      return Scaffold(
+        body: Row(
+          children: [
+            const Expanded(flex: 5, child: _BrandPanel()),
+            Expanded(
+              flex: 4,
+              child: SafeArea(
+                child: Center(
+                  child: SingleChildScrollView(padding: const EdgeInsets.all(40), child: form),
                 ),
               ),
             ),
+          ],
+        ),
+      );
+    }
+    return Scaffold(
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            const _BrandPanel(compact: true),
+            Padding(padding: const EdgeInsets.fromLTRB(24, 28, 24, 24), child: form),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The school's logo, name and tagline on its colour: beside the form on tablets, above
+/// it on phones.
+class _BrandPanel extends StatelessWidget {
+  const _BrandPanel({this.compact = false});
+
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final school = AppScope.of(context).school;
+    final white80 = Colors.white.withValues(alpha: 0.82);
+    final details = <Widget>[
+      SchoolLogo(size: compact ? 64 : 88, onColor: true),
+      SizedBox(height: compact ? 16 : 28),
+      Text(school.name,
+          style: (compact ? theme.textTheme.headlineSmall : theme.textTheme.displaySmall)
+              ?.copyWith(color: Colors.white)),
+      if (school.tagline != null) ...[
+        const SizedBox(height: 8),
+        Text(school.tagline!, style: theme.textTheme.titleMedium?.copyWith(color: white80)),
+      ],
+      if (!compact) ...[
+        const SizedBox(height: 40),
+        for (final (icon, text) in const [
+          (Icons.play_circle_outline_rounded, 'Video lessons, notes and notices'),
+          (Icons.wifi_rounded, 'Works on the campus Wi-Fi, no internet needed'),
+          (Icons.history_rounded, 'Picks up where you left off'),
+        ])
+          Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Row(children: [
+              Icon(icon, color: Colors.white, size: 22),
+              const SizedBox(width: 12),
+              Flexible(child: Text(text, style: theme.textTheme.bodyLarge?.copyWith(color: white80))),
+            ]),
           ),
+      ],
+    ];
+    final radius = compact ? const BorderRadius.vertical(bottom: Radius.circular(28)) : BorderRadius.zero;
+    return Container(
+      decoration: BoxDecoration(gradient: heroGradient(brandOf(context)), borderRadius: radius),
+      child: ClipRRect(
+        borderRadius: radius,
+        child: Stack(
+          children: [
+            const Positioned.fill(child: HeroDecoration()),
+            SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(compact ? 24 : 56, compact ? 28 : 56, 24, compact ? 32 : 56),
+                child: compact
+                    ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: details)
+                    : Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 520),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: details,
+                          ),
+                        ),
+                      ),
+              ),
+            ),
+          ],
         ),
       ),
     );

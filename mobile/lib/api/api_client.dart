@@ -221,6 +221,21 @@ class ApiClient {
 
   Future<void> logout() => _request('POST', '/api/v1/auth/logout');
 
+  /// The school's name, colour and logo. No sign-in needed: the sign-in screen shows them.
+  Future<SchoolProfile> school() async =>
+      SchoolProfile.fromJson(_map(await _request('GET', '/api/v1/school', authenticated: false)));
+
+  /// Notices for this student: important ones first, then newest.
+  Future<List<NoticeItem>> notices({int limit = 50}) async =>
+      _list(await _request('GET', '/api/v1/notices?limit=$limit')).map(NoticeItem.fromJson).toList();
+
+  /// The home page's banner slides, in the order staff set.
+  Future<List<BannerItem>> banners() async =>
+      _list(await _request('GET', '/api/v1/banners')).map(BannerItem.fromJson).toList();
+
+  /// An absolute URL for a path the server returned (logo and banner pictures).
+  Uri resolve(String path) => Uri.parse(baseUrl).resolve(path);
+
   Future<Student> me() async =>
       Student.fromMe(_map(await _request('GET', '/api/v1/me')));
 

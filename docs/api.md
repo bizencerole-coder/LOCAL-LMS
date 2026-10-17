@@ -139,6 +139,33 @@ token (a `student_id` in the body is ignored). Position is clamped to the durati
 request's own result. Concurrent saves for the same student and item (two devices) are
 last-writer-wins.
 
+## School, notices and home banners (app 1.2)
+
+`GET /api/v1/school` (no sign-in: the app shows it on the sign-in screen)
+```json
+{"name": "Riverside Public School", "short_name": "Riverside", "tagline": "Learn anywhere on campus",
+ "primary_color": "#1E3A8A", "logo_url": "/branding/logo-39edafd945a217d2f9a7.png", "updated_at": "…"}
+```
+Defaults (`"Campus LMS"`, `#2E5AAC`, no logo) until an administrator saves the dashboard's
+*School* page.
+
+`GET /api/v1/notices?limit=50` → the student's published, unexpired notices (for everyone,
+their batch, or their class), important ones first, then newest:
+`[{"id", "title", "body", "is_important", "published_at", "expires_at", "audience"}]`, where
+`audience` is `"All students"`, the batch name or `"Batch › Class"`. The app counts as new
+the notices published after the newest one the student has seen.
+
+`GET /api/v1/banners` → the home page's slides in the order staff set:
+`[{"id", "title", "subtitle", "image_url", "link"}]`. `link` is
+`{"type": "notice" | "subject" | "module", "id", "title", "subject_id"}` (`subject_id` for a
+module), or null when the slide opens nothing *or the student may not open the target*
+(another class's subject, a draft notice, an unpublished module).
+
+`logo_url` and `image_url` are paths on this server: Nginx serves `/branding/<name>` from
+`VIDEO_ROOT/.branding` without sign-in, with long caching (a changed picture gets a new
+name). Servers before 1.2 answer 404 to these endpoints; app 1.2 then shows its own
+defaults and no banners or notices.
+
 ## Endpoints for app 1.0 (deprecated)
 
 App 1.0 browses chapters and videos. These endpoints still work, on the same data, and

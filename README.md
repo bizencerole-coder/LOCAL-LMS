@@ -86,11 +86,14 @@ catalogue scoped to the student's class; videos, PDF notes and images behind sig
 expiring Nginx URLs with Range support; progress upsert with configurable completion;
 health/readiness endpoints; request-ID logging; a staff web dashboard (content tree with
 uploads, publish/unpublish/archive, moves and deletes that keep the folders in step,
-students with CSV import, staff accounts with admin/staff roles, folder-sync reports);
+students with CSV import, staff accounts with admin/staff roles, folder-sync reports,
+notices, home-page banners and the school's name, colour and logo);
 a folder sync that builds and follows the catalogue from `batch/class/subject/module/file`;
-an admin CLI with the same operations; and the Flutter app with login, home (subjects with
-progress, Continue Watching), My Learning, subject and module pages, a player with seek,
-±10 s, speed, full-screen, resume and retry, and notes/image viewers.
+an admin CLI with the same operations; and the Flutter app (1.2) in the school's branding:
+sign-in, a header with notices and connection status, side menu and bottom bar, a home page
+with greeting, banner slides, notices, Continue Watching and subjects with progress, Subjects,
+My Learning, Notices and Profile tabs, subject and module pages, a player with seek, ±10 s,
+speed, full-screen, resume and retry, and notes/image viewers.
 
 Verified on the development machine (Docker stack, smoke test, emulator end-to-end run,
 backup/restore): [docs/test-report-2026-10-16.md](docs/test-report-2026-10-16.md).

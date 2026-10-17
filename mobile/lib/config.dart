@@ -4,6 +4,9 @@
 /// remembered. Set a different default at build time with:
 ///   flutter build apk --dart-define=LMS_SERVER_URL=http://192.168.10.10
 class AppConfig {
+  /// Shown on the Profile tab and in About; keep in step with `version:` in pubspec.yaml.
+  static const appVersion = '1.2.0';
+
   static const defaultServerUrl = String.fromEnvironment(
     'LMS_SERVER_URL',
     defaultValue: 'http://192.168.10.10',

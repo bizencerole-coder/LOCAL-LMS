@@ -218,6 +218,20 @@ progress.meter::-moz-progress-bar { background: var(--primary); border-radius: 9
 .upload-actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-top: .4rem; padding-top: .9rem; border-top: 1px solid var(--line); }
 .upload-actions .check { flex: 1 1 18rem; margin: 0; }
 
+/* ---------- notices, banners, school */
+.badge-important { background: var(--red-soft); color: var(--red); }
+.thumb { width: 128px; height: 48px; object-fit: cover; border-radius: 8px; background: var(--grey-soft); flex: none; display: block; }
+.thumb-large { width: 100%; max-width: 640px; aspect-ratio: 8 / 3; height: auto; object-fit: cover; border-radius: 12px; background: var(--grey-soft); display: block; margin-bottom: 1rem; }
+.slide-cell { display: flex; gap: .8rem; align-items: center; }
+.logo-preview { width: 96px; height: 96px; object-fit: contain; border-radius: 16px; background: var(--grey-soft); padding: 8px; display: block; margin-bottom: .8rem; }
+.app-preview { width: 100%; max-width: 420px; height: auto; display: block; }
+input[type=date] { font: inherit; padding: .5rem .7rem; border: 1px solid #cdd5e3; border-radius: 8px; background: #fff; color: var(--text); }
+input[type=color] { width: 72px; height: 42px; padding: 3px; border: 1px solid #cdd5e3; border-radius: 8px; background: #fff; cursor: pointer; }
+input[type=file] { font: inherit; }
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: .4rem 1rem; margin: 0; }
+dl.facts dt { color: var(--muted); }
+dl.facts dd { margin: 0; }
+
 /* ---------- item page */
 .preview video, .preview img { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; display: block; object-fit: contain; }
 .preview img { background: var(--grey-soft); }

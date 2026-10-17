@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, textarea, checkbox, post_button, grouped_select, notice_badge with context %}
+{% block title %}Notices{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Notices</h1>
+    <p class="muted">Announcements in the student app (the bell in the header and the Notices tab), for every student, one batch or one class. Important notices stay at the top.</p>
+  </div>
+  <div class="actions"><a class="btn btn-primary" href="#new-notice">{{ icon('plus') }}<span>New notice</span></a></div>
+</header>
+
+<section class="card">
+  <h2>{{ icon('bell') }}{{ plural(rows | length, 'notice') }}</h2>
+  {% if rows %}
+  <table class="table">
+    <thead><tr><th>Notice</th><th>For</th><th>Status</th><th>Published</th><th class="right">Actions</th></tr></thead>
+    <tbody>
+    {% for n, audience, status in rows %}
+      <tr class="{{ '' if status == 'published' else 'is-off' }}">
+        <td><a href="/admin/notices/{{ n.id }}"><b>{{ n.title }}</b></a>{% if n.is_important %} <span class="badge badge-important">Important</span>{% endif %}
+          {% if n.body %}<br><span class="muted small">{{ n.body | truncate(100) }}</span>{% endif %}</td>
+        <td>{{ audience }}</td>
+        <td>{{ notice_badge(status) }}</td>
+        <td class="muted small">{{ n.published_at | time if n.published_at else '—' }}{% if n.expires_at %}<br>until {{ n.expires_at | until }}{% endif %}</td>
+        <td class="right nowrap">
+          {% if status == 'draft' %}{{ post_button('/admin/notices/' ~ n.id ~ '/publish', 'Publish', 'eye', 'btn btn-small', extra={'publish': '1'}) }}
+          {% else %}{{ post_button('/admin/notices/' ~ n.id ~ '/publish', 'Unpublish', 'eye-off', 'btn btn-small') }}{% endif %}
+          <a class="btn-icon" href="/admin/notices/{{ n.id }}" title="Edit">{{ icon('edit') }}</a>
+          {{ post_button('/admin/notices/' ~ n.id ~ '/delete', None, 'trash', 'btn-icon danger', confirm='Delete the notice ' ~ n.title ~ '?', title='Delete') }}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No notices yet. Write the first one below: exam dates, holidays, new lessons…</p>
+  {% endif %}
+</section>
+
+<section class="card" id="new-notice">
+  <h2>{{ icon('plus') }}New notice</h2>
+  <form method="post" action="/admin/notices" class="form-grid">
+    {{ csrf() }}
+    {{ field('title', 'Title', required=True, maxlength=200, placeholder='Unit test on Monday') }}
+    {{ grouped_select('audience', 'For', audiences, 'all') }}
+    {{ textarea('body', 'Message', rows=5, hint='Shown in full when the student opens the notice.') }}
+    {{ field('expires_on', 'Show until', type='date', hint='Optional: the notice disappears after this day.') }}
+    {{ checkbox('is_important', 'Important', hint='Highlighted and kept at the top.') }}
+    {{ checkbox('publish', 'Publish now', True, hint='Otherwise it is saved as a draft.') }}
+    <div class="form-actions"><button class="btn btn-primary" type="submit">{{ icon('check') }}<span>Save notice</span></button></div>
+  </form>
+</section>
+{% endblock %}

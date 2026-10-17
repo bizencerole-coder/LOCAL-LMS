@@ -8,26 +8,35 @@ import '../api/api_client.dart';
 import '../api/models.dart';
 import '../config.dart';
 
-/// App-wide state: server address, signed-in student, and server reachability.
+/// App-wide state: server address, signed-in student, the school's branding, the
+/// unread-notice count and server reachability.
 ///
-/// The session token lives in Android's encrypted storage; the server address
-/// and a cached copy of the student's name live in shared preferences so the
-/// app can open straight to the home screen without a network round trip.
+/// The session token lives in Android's encrypted storage; the server address and
+/// cached copies of the student's name and the school's branding live in shared
+/// preferences so the app opens straight to its screens without a network round trip.
 class AppState extends ChangeNotifier {
-  AppState._(this._prefs, this._secure, this._serverUrl, this._token, this._student) {
+  AppState._(this._prefs, this._secure, this._serverUrl, this._token, this._student, this._school) {
     _api = _buildClient();
   }
 
   static const _kServerUrl = 'server_url';
   static const _kStudent = 'student';
   static const _kToken = 'session_token';
+  static const _kSchool = 'school_profile';
+
+  /// Newest notice the student has seen, per student (tablets may be shared).
+  static String _kNoticesSeen(String studentId) => 'notices_seen_$studentId';
 
   final SharedPreferences _prefs;
   final FlutterSecureStorage _secure;
   String _serverUrl;
   String? _token;
   Student? _student;
+  SchoolProfile _school;
   late ApiClient _api;
+
+  /// Notices published since the student last opened the Notices tab.
+  final ValueNotifier<int> unreadNotices = ValueNotifier(0);
 
   /// null = not checked yet.
   final ValueNotifier<bool?> serverReachable = ValueNotifier(null);
@@ -47,11 +56,19 @@ class AppState extends ChangeNotifier {
     if (token != null && cached != null) {
       student = Student.fromJson(jsonDecode(cached) as Map<String, dynamic>);
     }
-    return AppState._(prefs, secure, serverUrl, student == null ? null : token, student);
+    var school = SchoolProfile.fallback;
+    final cachedSchool = prefs.getString(_kSchool);
+    if (cachedSchool != null) {
+      try {
+        school = SchoolProfile.fromJson(jsonDecode(cachedSchool) as Map<String, dynamic>);
+      } catch (_) {}
+    }
+    return AppState._(prefs, secure, serverUrl, student == null ? null : token, student, school);
   }
 
   String get serverUrl => _serverUrl;
   Student? get student => _student;
+  SchoolProfile get school => _school;
   bool get isSignedIn => _token != null && _student != null;
   ApiClient get api => _api;
 
@@ -117,6 +134,54 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Fetches the school's name, colour and logo; keeps the cached copy when the server
+  /// cannot be reached (or is older than app 1.2 and has no branding).
+  Future<void> refreshSchool() async {
+    try {
+      final school = await _api.school();
+      await _prefs.setString(_kSchool, jsonEncode(school.toJson()));
+      if (school != _school) {
+        _school = school;
+        notifyListeners();
+      }
+    } on ApiException {
+      // Keep what we have.
+    }
+  }
+
+  DateTime? get _noticesSeenAt {
+    final id = _student?.id;
+    final value = id == null ? null : _prefs.getString(_kNoticesSeen(id));
+    return value == null ? null : DateTime.tryParse(value);
+  }
+
+  /// Published after the newest notice the student had seen.
+  bool isNoticeUnread(NoticeItem notice) {
+    final seen = _noticesSeenAt;
+    return seen == null || notice.publishedAt.isAfter(seen);
+  }
+
+  /// Loads the student's notices and updates [unreadNotices].
+  Future<List<NoticeItem>> loadNotices() async {
+    final notices = await _api.notices();
+    unreadNotices.value = notices.where(isNoticeUnread).length;
+    return notices;
+  }
+
+  /// The student has now seen [notices] (compared by the server's publication times,
+  /// not this tablet's clock).
+  Future<void> markNoticesSeen(List<NoticeItem> notices) async {
+    final id = _student?.id;
+    if (id != null && notices.isNotEmpty) {
+      final newest = notices.map((n) => n.publishedAt).reduce((a, b) => a.isAfter(b) ? a : b);
+      final seen = _noticesSeenAt;
+      if (seen == null || newest.isAfter(seen)) {
+        await _prefs.setString(_kNoticesSeen(id), newest.toUtc().toIso8601String());
+      }
+    }
+    unreadNotices.value = 0;
+  }
+
   void _handleUnauthorized() {
     if (_token == null) return;
     _clearSession().then((_) {
@@ -128,6 +193,7 @@ class AppState extends ChangeNotifier {
   Future<void> _clearSession() async {
     _token = null;
     _student = null;
+    unreadNotices.value = 0;
     await _prefs.remove(_kStudent);
     try {
       await _secure.delete(key: _kToken);

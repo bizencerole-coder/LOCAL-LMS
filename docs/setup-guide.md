@@ -236,6 +236,15 @@ students. The dashboard has:
   **Import from CSV** creates many students at once (columns `student_code,username,full_name,class,password`;
   an empty password gets a generated one, shown once on the result page).
 - **Folder sync**: the result of every sync, and *Sync now*.
+- **Notices**: announcements for every student, one batch or one class, with an optional
+  "show until" date; *Important* ones stay on top. The app shows them on the home page and
+  in its Notices tab, with a count of new ones on the bell.
+- **Home banners**: the slides at the top of the app's home page (title, subtitle, a picture
+  of about 1600 × 600, optional dates). A slide can open a notice, a subject or a module;
+  the arrows set the order.
+- **School** (administrators): the school's name, short name, tagline, colour and logo. The
+  app uses them on the sign-in screen, in its header and side menu, and builds its colours
+  from the school colour. Tablets pick up changes the next time the app opens.
 
 The dashboard needs no internet (no external fonts or scripts), works on any modern
 browser, and keeps staff signed in for 12 hours (`STAFF_SESSION_TTL_SECONDS`).

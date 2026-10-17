@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -90,6 +90,44 @@ def fmt_time(value: datetime | None) -> str:
     return as_utc(value).astimezone(_tz()).strftime("%d %b %Y, %H:%M")
 
 
+def fmt_date(value: datetime | None) -> str:
+    if value is None:
+        return ""
+    return as_utc(value).astimezone(_tz()).strftime("%d %b %Y")
+
+
+def fmt_until(value: datetime | None) -> str:
+    """The last day of an "until" moment stored as the start of the next day."""
+    if value is None:
+        return ""
+    return fmt_date(as_utc(value) - timedelta(microseconds=1))
+
+
+def date_value(value: datetime | None, end_of_day: bool = False) -> str:
+    """``value`` as YYYY-MM-DD in local time, for a date input (see parse_local_date)."""
+    if value is None:
+        return ""
+    local = as_utc(value).astimezone(_tz())
+    if end_of_day:
+        local -= timedelta(microseconds=1)
+    return local.strftime("%Y-%m-%d")
+
+
+def parse_local_date(value: object, what: str, *, end_of_day: bool = False) -> datetime | None:
+    """A YYYY-MM-DD date input as a moment: the start of that local day, or its end
+    (the start of the next day) for "until" dates. Empty -> None."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        day = date.fromisoformat(text)
+    except ValueError as exc:
+        raise FormError(f"{what}: enter a date such as 2026-11-30.") from exc
+    if end_of_day:
+        day += timedelta(days=1)
+    return datetime(day.year, day.month, day.day, tzinfo=_tz()).astimezone(UTC)
+
+
 def fmt_ago(value: datetime | None) -> str:
     if value is None:
         return "never"
@@ -118,7 +156,7 @@ def plural(count: int, word: str, many: str | None = None) -> str:
 
 
 env = TEMPLATES.env
-env.filters.update(duration=fmt_duration, size=fmt_size, time=fmt_time, ago=fmt_ago)
+env.filters.update(duration=fmt_duration, size=fmt_size, time=fmt_time, ago=fmt_ago, date=fmt_date, until=fmt_until, date_value=date_value)
 env.globals.update(
     PERMISSION_HELP=PERMISSION_HELP,
     TYPE_LABELS=TYPE_LABELS,

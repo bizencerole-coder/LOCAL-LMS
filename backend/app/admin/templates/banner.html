@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, checkbox, post_button, grouped_select, banner_badge, slide_thumb with context %}
+{% block title %}{{ banner.title }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="kicker">{{ icon('slides') }}Home banner</p>
+    <h1>{{ banner.title }} {{ banner_badge(state) }}</h1>
+    {% if link_text %}<p class="muted">A tap opens {{ link_text }}</p>{% endif %}
+  </div>
+</header>
+
+<section class="card">
+  {{ slide_thumb(image, school.primary_color, 'thumb-large') }}
+  <form method="post" action="/admin/banners/{{ banner.id }}" class="form-grid" enctype="multipart/form-data">
+    {{ csrf() }}
+    {{ field('title', 'Title', banner.title, required=True, maxlength=120) }}
+    {{ field('subtitle', 'Subtitle', banner.subtitle, maxlength=240) }}
+    <label class="field"><span class="field-label">{{ 'Replace the picture' if image else 'Picture' }}</span>
+      <input type="file" name="image" accept="image/png,image/jpeg,image/webp">
+      <span class="hint">PNG, JPEG or WebP up to {{ max_mb }} MB; 1600 × 600 works best.</span></label>
+    {% if image %}{{ checkbox('remove_image', 'Remove the picture (use the school colour)') }}{% endif %}
+    {{ grouped_select('link', 'A tap opens', links, link) }}
+    {{ grouped_select('audience', 'For', audiences, audience) }}
+    {{ field('starts_on', 'Show from', banner.starts_at | date_value, type='date', hint='Optional.') }}
+    {{ field('ends_on', 'Show until', banner.ends_at | date_value(True), type='date', hint='Optional: hidden after this day.') }}
+    {{ checkbox('is_active', 'Show it', banner.is_active) }}
+    <div class="form-actions"><button class="btn btn-primary" type="submit">{{ icon('check') }}<span>Save</span></button></div>
+  </form>
+  <div class="danger-zone">
+    {{ post_button('/admin/banners/' ~ banner.id ~ '/delete', 'Delete banner', 'trash', 'btn btn-danger', confirm='Delete the banner ' ~ banner.title ~ '?') }}
+  </div>
+</section>
+{% endblock %}

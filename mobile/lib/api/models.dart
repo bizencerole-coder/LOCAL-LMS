@@ -332,3 +332,137 @@ class ContinueItem {
     );
   }
 }
+
+/// "#RRGGBB" or null.
+String? _hexColor(Object? value) =>
+    value is String && RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(value) ? value : null;
+
+/// The school's name, colour and logo (`GET /api/v1/school`, set on the dashboard).
+class SchoolProfile {
+  const SchoolProfile({required this.name, this.shortName, this.tagline, this.primaryColor, this.logoUrl});
+
+  /// Until the server has answered once (or for servers before app 1.2).
+  static const fallback = SchoolProfile(name: 'Campus LMS');
+
+  final String name;
+  final String? shortName;
+  final String? tagline;
+
+  /// "#RRGGBB"; null for the app's own colour.
+  final String? primaryColor;
+
+  /// A path on the campus server, e.g. /branding/logo-….png; null without a logo.
+  final String? logoUrl;
+
+  /// The short name when there is one: it fits the header.
+  String get displayName => shortName ?? name;
+
+  factory SchoolProfile.fromJson(Map<String, dynamic> json) => SchoolProfile(
+        name: _text(json['name']) ?? fallback.name,
+        shortName: _text(json['short_name']),
+        tagline: _text(json['tagline']),
+        primaryColor: _hexColor(json['primary_color']),
+        logoUrl: _text(json['logo_url']),
+      );
+
+  /// Same keys as the API, for the local cache.
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'short_name': shortName,
+        'tagline': tagline,
+        'primary_color': primaryColor,
+        'logo_url': logoUrl,
+      };
+
+  @override
+  bool operator ==(Object other) =>
+      other is SchoolProfile &&
+      other.name == name &&
+      other.shortName == shortName &&
+      other.tagline == tagline &&
+      other.primaryColor == primaryColor &&
+      other.logoUrl == logoUrl;
+
+  @override
+  int get hashCode => Object.hash(name, shortName, tagline, primaryColor, logoUrl);
+}
+
+/// An announcement from the school (`GET /api/v1/notices`).
+class NoticeItem {
+  const NoticeItem({
+    required this.id,
+    required this.title,
+    required this.publishedAt,
+    this.body,
+    this.isImportant = false,
+    this.audience,
+  });
+
+  final String id;
+  final String title;
+  final String? body;
+  final bool isImportant;
+  final DateTime publishedAt;
+
+  /// "All students", a batch, or "Batch › Class".
+  final String? audience;
+
+  factory NoticeItem.fromJson(Map<String, dynamic> json) => NoticeItem(
+        id: json['id'] as String,
+        title: json['title'] as String,
+        body: _text(json['body']),
+        isImportant: json['is_important'] == true,
+        publishedAt: _date(json['published_at']) ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        audience: _text(json['audience']),
+      );
+}
+
+enum BannerLinkType { notice, subject, module }
+
+/// What tapping a home banner opens.
+class BannerLink {
+  const BannerLink({required this.type, required this.id, required this.title, this.subjectId});
+
+  final BannerLinkType type;
+  final String id;
+  final String title;
+
+  /// For a module: the subject it belongs to.
+  final String? subjectId;
+
+  /// Null for a link this app version cannot open.
+  static BannerLink? fromJson(Object? json) {
+    if (json is! Map<String, dynamic>) return null;
+    final type = switch (json['type']) {
+      'notice' => BannerLinkType.notice,
+      'subject' => BannerLinkType.subject,
+      'module' => BannerLinkType.module,
+      _ => null,
+    };
+    final id = _text(json['id']);
+    final subjectId = _text(json['subject_id']);
+    if (type == null || id == null || (type == BannerLinkType.module && subjectId == null)) return null;
+    return BannerLink(type: type, id: id, title: _text(json['title']) ?? '', subjectId: subjectId);
+  }
+}
+
+/// A slide of the home page's banner (`GET /api/v1/banners`).
+class BannerItem {
+  const BannerItem({required this.id, required this.title, this.subtitle, this.imageUrl, this.link});
+
+  final String id;
+  final String title;
+  final String? subtitle;
+
+  /// A path on the campus server; null: the slide is drawn in the school colour.
+  final String? imageUrl;
+  final BannerLink? link;
+
+  factory BannerItem.fromJson(Map<String, dynamic> json) => BannerItem(
+        id: json['id'] as String,
+        title: json['title'] as String,
+        subtitle: _text(json['subtitle']),
+        imageUrl: _text(json['image_url']),
+        link: BannerLink.fromJson(json['link']),
+      );
+}

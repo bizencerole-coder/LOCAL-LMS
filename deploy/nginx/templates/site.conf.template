@@ -146,6 +146,28 @@ server {
         sendfile_max_chunk 2m;
     }
 
+    # The school logo and home-page banner pictures, uploaded on the dashboard. Public: the
+    # app shows the logo before sign-in. Names contain the file's hash, so a changed picture
+    # gets a new URL and these can be cached.
+    location /branding/ {
+        if ($request_method !~ ^(GET|HEAD)$) {
+            add_header Allow "GET, HEAD" always;
+            return 405;
+        }
+        alias /srv/campus-lms/videos/.branding/;
+        autoindex off;
+        log_not_found off;
+        if (-d $request_filename) { return 404; }
+        types {
+            image/jpeg jpg jpeg;
+            image/png png;
+            image/webp webp;
+        }
+        default_type application/octet-stream;
+        add_header Cache-Control "public, max-age=604800, immutable";
+        add_header X-Content-Type-Options "nosniff";
+    }
+
     # Nothing else is served: no directory listings, no other files.
     location / {
         return 404;

@@ -100,6 +100,34 @@ def _check_pdf(path: Path) -> None:
         raise ContentFileError(f"{path.name} is not a PDF file (no %PDF header).")
 
 
+_IMAGE_SIGNATURES = (
+    ("image/png", lambda head: head[:8] == b"\x89PNG\r\n\x1a\n"),
+    ("image/jpeg", lambda head: head[:3] == b"\xff\xd8\xff"),
+    ("image/webp", lambda head: head[:4] == b"RIFF" and head[8:12] == b"WEBP"),
+)
+
+
+def sniff_image(data: bytes) -> tuple[str, int | None, int | None] | None:
+    """(MIME type, width, height) of PNG, JPEG or WebP ``data`` by its content; else None."""
+    head = data[: 64 * 1024]
+    for mime, matches in _IMAGE_SIGNATURES:
+        if matches(head):
+            try:
+                width, height = _size_from_head(head, mime)
+            except (struct.error, IndexError):
+                width = height = None
+            return mime, width, height
+    return None
+
+
+def _size_from_head(head: bytes, mime: str) -> tuple[int | None, int | None]:
+    if mime == "image/png":
+        return struct.unpack(">II", head[16:24])
+    if mime == "image/jpeg":
+        return _jpeg_size(head)
+    return _webp_size(head)
+
+
 def _image_size(path: Path, mime: str) -> tuple[int | None, int | None]:
     with path.open("rb") as handle:
         head = handle.read(64 * 1024)

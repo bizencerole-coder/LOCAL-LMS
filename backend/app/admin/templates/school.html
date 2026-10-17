@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, checkbox with context %}
+{% block title %}School{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>School</h1>
+    <p class="muted">The name, logo and colour of the student app: on the sign-in screen, in the header and on the home page. Tablets show changes the next time the app opens.</p>
+  </div>
+</header>
+
+<div class="grid-2 wide-left">
+  <section class="card">
+    <h2>{{ icon('school') }}Details</h2>
+    {% if logo %}<img class="logo-preview" src="{{ logo }}" alt="Current logo">{% endif %}
+    {% if can_edit %}
+    <form method="post" action="/admin/school" class="form-grid" enctype="multipart/form-data">
+      {{ csrf() }}
+      {{ field('name', 'School name', school.name, required=True, maxlength=200) }}
+      {{ field('short_name', 'Short name', school.short_name, maxlength=40, hint='For the app header, e.g. SMHSS.') }}
+      {{ field('tagline', 'Tagline', school.tagline, maxlength=200, placeholder='Learning, anywhere on campus') }}
+      <label class="field"><span class="field-label">Colour</span>
+        <input type="color" name="primary_color" value="{{ school.primary_color }}">
+        <span class="hint">The app's main colour (default {{ default_color }}). Darker colours read best.</span></label>
+      <label class="field"><span class="field-label">{{ 'Replace the logo' if logo else 'Logo' }}</span>
+        <input type="file" name="logo" accept="image/png,image/jpeg,image/webp">
+        <span class="hint">Square, at least 256 × 256; PNG with a transparent background looks best. Up to {{ max_mb }} MB.</span></label>
+      {% if logo %}{{ checkbox('remove_logo', 'Remove the logo') }}{% endif %}
+      <div class="form-actions"><button class="btn btn-primary" type="submit">{{ icon('check') }}<span>Save</span></button></div>
+    </form>
+    {% else %}
+    <dl class="facts">
+      <dt>School name</dt><dd>{{ school.name }}</dd>
+      <dt>Short name</dt><dd>{{ school.short_name or '—' }}</dd>
+      <dt>Tagline</dt><dd>{{ school.tagline or '—' }}</dd>
+      <dt>Colour</dt><dd><code>{{ school.primary_color }}</code></dd>
+    </dl>
+    <p class="muted small">Only administrators can change these.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>{{ icon('eye') }}In the app</h2>
+    <svg class="app-preview" viewBox="0 0 420 170" role="img" aria-label="Preview of the app's home header">
+      <rect width="420" height="170" rx="20" fill="{{ school.primary_color }}"/>
+      <rect x="20" y="20" width="44" height="44" rx="12" fill="#ffffff"/>
+      {% if logo %}<image href="{{ logo }}" x="24" y="24" width="36" height="36" preserveAspectRatio="xMidYMid meet"/>{% endif %}
+      <text x="76" y="40" fill="#ffffff" font-size="16" font-weight="700" font-family="system-ui, sans-serif">{{ (school.short_name or school.name) | truncate(30) }}</text>
+      {% if school.tagline %}<text x="76" y="60" fill="#ffffff" fill-opacity=".8" font-size="12" font-family="system-ui, sans-serif">{{ school.tagline | truncate(44) }}</text>{% endif %}
+      <text x="20" y="112" fill="#ffffff" font-size="22" font-weight="700" font-family="system-ui, sans-serif">Good morning, Anu</text>
+      <text x="20" y="138" fill="#ffffff" fill-opacity=".8" font-size="13" font-family="system-ui, sans-serif">Batch 2026-27 · Class 12</text>
+    </svg>
+  </section>
+</div>
+{% endblock %}

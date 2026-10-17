@@ -70,3 +70,33 @@
   {{ post_button(action, None, 'down', 'btn-icon', extra={'direction': 'down'}, title='Move down') }}
 </span>
 {%- endmacro %}
+
+{# A <select> from [(group label or "", [(value, text), ...]), ...]; empty groups are left out. #}
+{% macro grouped_select(name, label, groups, selected="", hint=None) -%}
+<label class="field">
+  <span class="field-label">{{ label }}</span>
+  <select name="{{ name }}">
+    {%- for group, options in groups if options %}
+    {% if group %}<optgroup label="{{ group }}">{% endif %}
+      {%- for value, text in options %}<option value="{{ value }}"{% if value == selected %} selected{% endif %}>{{ text }}</option>{% endfor %}
+    {% if group %}</optgroup>{% endif %}
+    {%- endfor %}
+  </select>
+  {% if hint %}<span class="hint">{{ hint }}</span>{% endif %}
+</label>
+{%- endmacro %}
+
+{% macro notice_badge(status) -%}
+{% set labels = {"published": ("badge-published", "Published"), "draft": ("badge-draft", "Draft"), "expired": ("badge-archived", "Expired")} %}
+<span class="badge {{ labels[status][0] }}">{{ labels[status][1] }}</span>
+{%- endmacro %}
+
+{% macro banner_badge(state) -%}
+{% set labels = {"showing": ("badge-published", "Showing"), "scheduled": ("badge-draft", "Scheduled"), "ended": ("badge-archived", "Ended"), "off": ("badge-off", "Off")} %}
+<span class="badge {{ labels[state][0] }}">{{ labels[state][1] }}</span>
+{%- endmacro %}
+
+{# The banner picture, or the school colour when there is none (an SVG fill: no inline styles under the CSP). #}
+{% macro slide_thumb(img, color, cls="thumb") -%}
+{% if img %}<img class="{{ cls }}" src="{{ img }}" alt="">{% else %}<svg class="{{ cls }}" viewBox="0 0 160 60" aria-hidden="true"><rect width="160" height="60" rx="8" fill="{{ color }}"/></svg>{% endif %}
+{%- endmacro %}

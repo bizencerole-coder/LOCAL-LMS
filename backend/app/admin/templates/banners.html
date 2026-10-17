@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, csrf, field, checkbox, post_button, grouped_select, banner_badge, slide_thumb, move_buttons with context %}
+{% block title %}Home banners{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Home banners</h1>
+    <p class="muted">Slides at the top of the app's home page, changing every few seconds. A tap can open a notice, a subject or a module. Pictures look best at 1600 × 600 pixels.</p>
+  </div>
+  <div class="actions"><a class="btn btn-primary" href="#new-banner">{{ icon('plus') }}<span>New banner</span></a></div>
+</header>
+
+<section class="card">
+  <h2>{{ icon('slides') }}{{ plural(rows | length, 'banner') }}</h2>
+  {% if rows %}
+  <table class="table">
+    <thead><tr><th class="narrow">Order</th><th>Slide</th><th>A tap opens</th><th>For</th><th>Status</th><th class="right">Actions</th></tr></thead>
+    <tbody>
+    {% for b, img, link_text, audience, state in rows %}
+      <tr class="{{ '' if state == 'showing' else 'is-off' }}">
+        <td class="narrow">{{ move_buttons('/admin/banners/' ~ b.id ~ '/move') }}</td>
+        <td><div class="slide-cell">{{ slide_thumb(img, school.primary_color) }}<span><a href="/admin/banners/{{ b.id }}"><b>{{ b.title }}</b></a>{% if b.subtitle %}<br><span class="muted small">{{ b.subtitle }}</span>{% endif %}</span></div></td>
+        <td class="small">{{ link_text or '—' }}</td>
+        <td>{{ audience }}</td>
+        <td>{{ banner_badge(state) }}{% if b.starts_at or b.ends_at %}<br><span class="muted small">{% if b.starts_at %}from {{ b.starts_at | date }} {% endif %}{% if b.ends_at %}until {{ b.ends_at | until }}{% endif %}</span>{% endif %}</td>
+        <td class="right nowrap">
+          <a class="btn-icon" href="/admin/banners/{{ b.id }}" title="Edit">{{ icon('edit') }}</a>
+          {{ post_button('/admin/banners/' ~ b.id ~ '/delete', None, 'trash', 'btn-icon danger', confirm='Delete the banner ' ~ b.title ~ '?', title='Delete') }}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No banners yet. Without banners the app shows a welcome slide with the school's name.</p>
+  {% endif %}
+</section>
+
+<section class="card" id="new-banner">
+  <h2>{{ icon('plus') }}New banner</h2>
+  <form method="post" action="/admin/banners" class="form-grid" enctype="multipart/form-data">
+    {{ csrf() }}
+    {{ field('title', 'Title', required=True, maxlength=120, placeholder='Board exam revision starts Monday') }}
+    {{ field('subtitle', 'Subtitle', maxlength=240, placeholder='New videos every day in Physics and Chemistry') }}
+    <label class="field"><span class="field-label">Picture</span>
+      <input type="file" name="image" accept="image/png,image/jpeg,image/webp">
+      <span class="hint">Optional. PNG, JPEG or WebP up to {{ max_mb }} MB; 1600 × 600 works best. Without one, the slide uses the school colour.</span></label>
+    {{ grouped_select('link', 'A tap opens', links, '') }}
+    {{ grouped_select('audience', 'For', audiences, 'all') }}
+    {{ field('starts_on', 'Show from', type='date', hint='Optional.') }}
+    {{ field('ends_on', 'Show until', type='date', hint='Optional: hidden after this day.') }}
+    {{ checkbox('is_active', 'Show it', True) }}
+    <div class="form-actions"><button class="btn btn-primary" type="submit">{{ icon('check') }}<span>Add banner</span></button></div>
+  </form>
+</section>
+{% endblock %}

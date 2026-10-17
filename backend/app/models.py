@@ -318,6 +318,98 @@ class StaffSession(Base):
     staff: Mapped[StaffUser] = relationship()
 
 
+DEFAULT_SCHOOL_NAME = "Campus LMS"
+DEFAULT_SCHOOL_COLOR = "#2E5AAC"
+
+
+class SchoolProfile(Base):
+    """The school's name, logo and colour, shown in the student app and on the dashboard.
+
+    One row (id 1), created when an administrator first saves the School page; until
+    then the defaults above are used.
+    """
+
+    __tablename__ = "school_profile"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    short_name: Mapped[str | None] = mapped_column(String(40))
+    tagline: Mapped[str | None] = mapped_column(String(200))
+    # "#RRGGBB"; the app builds its colour scheme from it.
+    primary_color: Mapped[str] = mapped_column(
+        String(7), default=DEFAULT_SCHOOL_COLOR, server_default=DEFAULT_SCHOOL_COLOR
+    )
+    # File name under VIDEO_ROOT/.branding, served by Nginx at /branding/<name>.
+    logo_file: Mapped[str | None] = mapped_column(String(100))
+    updated_at: Mapped[datetime] = _updated()
+
+
+class Notice(Base):
+    """An announcement in the app's Notices: for every student, one batch or one class."""
+
+    __tablename__ = "notices"
+    __table_args__ = (CheckConstraint("batch_id IS NULL OR class_id IS NULL", name="one_audience"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str | None] = mapped_column(Text)
+    # Neither set: every student. batch_id: the batch's classes. class_id: that class.
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"), index=True
+    )
+    class_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("classes.id", ondelete="CASCADE"), index=True
+    )
+    is_important: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # When it was published (again); null while it is a draft.
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("staff_users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = _updated()
+
+
+class BannerLink(enum.StrEnum):
+    NOTICE = "notice"
+    SUBJECT = "subject"
+    MODULE = "module"
+
+
+class Banner(Base):
+    """A slide in the banner at the top of the app's home page."""
+
+    __tablename__ = "banners"
+    __table_args__ = (
+        CheckConstraint("batch_id IS NULL OR class_id IS NULL", name="one_audience"),
+        CheckConstraint(
+            "link_type IS NULL OR link_type IN ('notice', 'subject', 'module')", name="link_type_valid"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(120))
+    subtitle: Mapped[str | None] = mapped_column(String(240))
+    # File name under VIDEO_ROOT/.branding; without one the app shows the school colour.
+    image_file: Mapped[str | None] = mapped_column(String(100))
+    # What a tap opens. Shown only when the student may see it (else the slide just shows).
+    link_type: Mapped[str | None] = mapped_column(String(20))
+    link_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"), index=True
+    )
+    class_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("classes.id", ondelete="CASCADE"), index=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = _updated()
+
+
 class SyncRun(Base):
     """One run of the folder sync (cron/CLI or the dashboard), shown on the dashboard."""
 

@@ -79,6 +79,9 @@ Future<void> tapPlayerControl(WidgetTester tester, Finder control) async {
   await tester.pump();
 }
 
+/// A destination of the bottom bar.
+Finder navItem(String label) => find.descendant(of: find.byType(NavigationBar), matching: find.text(label));
+
 /// Android system back (gesture or button), as students navigate on tablets.
 Future<void> systemBack(WidgetTester tester) async {
   await tester.binding.handlePopRoute();
@@ -141,11 +144,13 @@ void main() {
         reason: 'the password field did not take the new text');
     // The on-screen keyboard now covers the button; submit with the keyboard's Done key.
     await tester.testTextInput.receiveAction(TextInputAction.done);
-    await pumpUntil(tester, () => find.textContaining('Hello, $_fullName').evaluate().isNotEmpty,
-        reason: 'home screen');
+    final greeting = RegExp('^Good (morning|afternoon|evening), ${_fullName.split(' ').first}\$');
+    await pumpUntil(tester, () => find.textContaining(greeting).evaluate().isNotEmpty, reason: 'home screen greeting');
+    expect(find.byTooltip('Menu'), findsOneWidget, reason: 'side menu button in the header');
 
     // --- Browsing (T-04, T-05): own class only, draft video hidden ----------------
-    // Subjects → Computer Science → module Python Basics → its videos and notes.
+    // Subjects tab → Computer Science → module Python Basics → its videos and notes.
+    await tester.tap(navItem('Subjects'));
     Finder subject(String name) => find.descendant(of: find.byType(GridView), matching: find.text(name));
     await pumpUntil(tester, () => subject('Computer Science').evaluate().isNotEmpty, reason: 'subjects');
     expect(subject('Mathematics'), findsOneWidget);
@@ -221,16 +226,28 @@ void main() {
     await pumpUntil(tester, () => find.text('Python Basics').evaluate().isNotEmpty, reason: 'modules');
     await systemBack(tester);
 
-    // --- Continue Watching and My Learning ------------------------------------
-    await pumpUntil(tester, () => find.text('Continue watching').evaluate().isNotEmpty,
-        reason: 'Continue watching section');
-    await tapText(tester, 'My Learning');
+    // --- Continue Watching (Home) and My Learning --------------------------------
+    await tester.tap(navItem('Home'));
+    await pumpUntil(tester, () => find.textContaining(greeting).evaluate().isNotEmpty, reason: 'Home tab');
+    await tester.scrollUntilVisible(find.text('Continue watching'), 250,
+        scrollable: find.byWidgetPredicate((w) => w is Scrollable && w.axisDirection == AxisDirection.down).first);
+    await tester.tap(navItem('My Learning'));
     await pumpUntil(tester, () => find.text('Lesson 2: Python Functions').evaluate().isNotEmpty,
         reason: 'My Learning list');
     expect(find.text('Python Basics: Notes'), findsOneWidget, reason: 'opened notes are in My Learning too');
 
-    // --- Sign out ---------------------------------------------------------------
+    // --- Notices (from the bottom bar) ------------------------------------------
+    await tester.tap(navItem('Notices'));
+    await pumpUntil(
+      tester,
+      () => find.textContaining(RegExp(r'^From ')).evaluate().isNotEmpty,
+      reason: 'Notices tab',
+    );
+
+    // --- Sign out (Account → Profile tab) ----------------------------------------
     await tester.tap(find.byTooltip('Account'));
+    await pumpUntil(tester, () => find.text('Sign out').evaluate().isNotEmpty, reason: 'Profile tab');
+    await tester.ensureVisible(find.text('Sign out'));
     await tapText(tester, 'Sign out');
     await pumpUntil(tester, () => find.widgetWithText(FilledButton, 'Sign out').evaluate().isNotEmpty,
         reason: 'confirm dialog');

@@ -19,7 +19,7 @@ from .config import get_settings
 from .errors import install_error_handlers, internal_error_response, service_busy_response
 from .logging_config import configure_logging, log_event, request_id_var
 from .admin import install_admin
-from .routers import auth, catalog, health, playback, progress
+from .routers import auth, catalog, health, playback, progress, school
 
 access_logger = logging.getLogger("app.access")
 logger = logging.getLogger("app.errors")
@@ -137,6 +137,7 @@ def create_app() -> FastAPI:
     app.include_router(catalog.router)
     app.include_router(playback.router)
     app.include_router(progress.router)
+    app.include_router(school.router)
     install_admin(app)
 
     @app.get("/", include_in_schema=False)

@@ -123,6 +123,42 @@ class ContentAccessOut(BaseModel):
     is_completed: bool
 
 
+class SchoolOut(BaseModel):
+    """The school's branding for the app (no sign-in needed: shown on the sign-in screen)."""
+
+    name: str
+    short_name: str | None
+    tagline: str | None
+    primary_color: str = Field(description='"#RRGGBB"')
+    logo_url: str | None = Field(description="Path on this server, e.g. /branding/logo-….png")
+    updated_at: datetime | None
+
+
+class NoticeOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    body: str | None
+    is_important: bool
+    published_at: datetime
+    expires_at: datetime | None
+    audience: str = Field(description='"All students", a batch, or "Batch › Class"')
+
+
+class BannerLinkOut(BaseModel):
+    type: str = Field(description="notice, subject or module")
+    id: uuid.UUID
+    title: str
+    subject_id: uuid.UUID | None = Field(default=None, description="For a module: its subject")
+
+
+class BannerOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    subtitle: str | None
+    image_url: str | None
+    link: BannerLinkOut | None = Field(description="What a tap opens; null when there is nothing to open")
+
+
 class ProgressUpdate(BaseModel):
     # strict: JSON numbers only (no "123" strings or booleans), like the other schemas.
     model_config = ConfigDict(strict=True)

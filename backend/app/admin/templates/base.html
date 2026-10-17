@@ -22,7 +22,10 @@
       <a href="/admin/" class="{{ 'active' if active == 'dashboard' else '' }}">{{ icon('dashboard') }}Dashboard</a>
       <a href="/admin/batches" class="{{ 'active' if active == 'content' else '' }}">{{ icon('layers') }}Content</a>
       <a href="/admin/students" class="{{ 'active' if active == 'students' else '' }}">{{ icon('users') }}Students</a>
+      <a href="/admin/notices" class="{{ 'active' if active == 'notices' else '' }}">{{ icon('bell') }}Notices</a>
+      <a href="/admin/banners" class="{{ 'active' if active == 'banners' else '' }}">{{ icon('slides') }}Home banners</a>
       <a href="/admin/sync" class="{{ 'active' if active == 'sync' else '' }}">{{ icon('sync') }}Folder sync</a>
+      <a href="/admin/school" class="{{ 'active' if active == 'school' else '' }}">{{ icon('school') }}School</a>
       {% if staff.is_admin %}<a href="/admin/staff" class="{{ 'active' if active == 'staff' else '' }}">{{ icon('shield') }}Staff</a>{% endif %}
     </nav>
     <div class="sidebar-foot">
