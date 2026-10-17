@@ -103,10 +103,22 @@ Found and fixed during these tests:
 - The cron-pause pattern in `upgrade.sh` could never match (the sed delimiter was also the
   regex alternation); verified with a pause/resume round trip.
 
-**Not done yet:** the campus server (172.18.1.169) did not answer on 17 Oct (switched off), so
-it is still on the 16 Oct version and the realme tablet still runs app 1.0.1. App 1.1.0 is
-built (`campus-lms-1.1.0-server-172.18.1.169.apk`) and goes on the tablet after
-`deploy/scripts/upgrade.sh` has run on the server.
+### Upgrade of the campus server (17 Oct 2026, ~09:57)
+
+After the server was switched on, `git pull` (to `d54df17`) and
+`deploy/scripts/upgrade.sh --no-pull --share-path '\\172.18.1.169\campus-lms\videos'` as lmsadmin:
+
+| Step / check | Result |
+|---|---|
+| Backup, sync paused, settings | Database and configuration backed up; cron line paused and put back; `.env` gained `LMS_CONTENT_UID=1000`, `LMS_CONTENT_GID=100` (owner of the content folder, lmsadmin:users) and `CONTENT_SHARE_PATH` |
+| Rebuild and migration | New image built on the host; migration 0002 ran; `class11/` and `class12/` moved into `batch-2026-27/`; all containers healthy; `check_stack.sh` ALL PASSED; **UPGRADE COMPLETE** |
+| Data kept | Same IDs for every class, subject, module and item (including the user's *Python Tutorial*); 4 students; `check-media` 6/6 OK |
+| API as the folder owner | runs as uid 1000 / gid 100 and can write in `batch-2026-27/` |
+| Signed media links (generated inside the API container) | video `video/mp4`, notes `application/pdf`, image `image/png`: HEAD 200, Range 206, unsigned 403 |
+| Dashboard | `/admin/login` 200, `/admin/` and `/` redirect to the sign-in |
+| Demo notes and image | generated on the host and registered by the seed (published) |
+| First administrator | `admin` created; the user typed the password in a terminal tab |
+| Tablet | realme Pad 2 updated to app 1.1.0 with `adb install -r`; yesterday's 8-hour sign-in had expired, so the user signed in again as `demo.student`. Home shows *Batch 2026-27 · Class 12*, Continue watching with yesterday's resume points kept (*Python Tutorial* 0:11, *Lesson 1* 0:20), subjects with counts and progress; Python Basics lists the three videos and the notes; the notes open as PDF pages (*Page 1 of 3*) from the campus server |
 
 ## Review findings and fixes
 
