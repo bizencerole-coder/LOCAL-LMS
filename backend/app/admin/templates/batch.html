@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, csrf, field, textarea, checkbox, flag_badge, post_button, folder_note, counts as count_badges %}
+{% from "_macros.html" import icon, csrf, field, textarea, checkbox, flag_badge, post_button, folder_note, counts as count_badges with context %}
 {% block title %}{{ batch.name }}{% endblock %}
 {% block content %}
 <header class="page-head">

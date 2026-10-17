@@ -395,3 +395,50 @@ def test_dashboard_warns_when_content_folders_are_read_only(client, db, catalog,
     for url in ("/admin/", f"/admin/modules/{catalog.basics.id}"):
         page = client.get(url)
         assert "The server cannot change files in" in page.text and "LMS_CONTENT_UID" in page.text, url
+
+
+# --------------------------------------------------------------------------- forms as a browser sends them
+
+
+def form_fields(html: str, action: str) -> dict[str, str]:
+    """The hidden fields of the first form posting to ``action``, as a browser would send them."""
+    match = re.search(r'<form method="post" action="' + re.escape(action) + r'"[^>]*>(.*?)</form>', html, re.S)
+    assert match, f"no form for {action}"
+    return dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)">', match.group(1)))
+
+
+def test_every_form_carries_the_page_token(client, db, catalog, admin):
+    """Regression: the form helpers were imported without the page context, so every form posted an
+    empty token and the dashboard answered "This form has expired" to every button."""
+    pages = [
+        "/admin/", "/admin/batches", f"/admin/batches/{catalog.batch.id}", f"/admin/classes/{catalog.class12.id}",
+        f"/admin/subjects/{catalog.cs.id}", f"/admin/modules/{catalog.basics.id}", f"/admin/contents/{catalog.lesson1.id}",
+        "/admin/students", f"/admin/students/{catalog.student.id}", "/admin/students/import", "/admin/staff",
+        "/admin/account", "/admin/sync",
+    ]
+    for url in pages:
+        html = client.get(url).text
+        tokens = re.findall(r'name="csrf_token" value="([^"]*)"', html)
+        assert tokens, url
+        assert set(tokens) == {admin}, f"{url}: {len(tokens)} forms, tokens {set(tokens) - {admin}}"
+
+
+def test_buttons_work_with_the_tokens_in_their_forms(client, db, catalog, teacher):
+    module_page = client.get(f"/admin/modules/{catalog.basics.id}").text
+    status_url = f"/admin/contents/{catalog.draft.id}/status"
+    response = client.post(status_url, data=form_fields(module_page, status_url), follow_redirects=False)
+    assert response.status_code == 303
+    db.refresh(catalog.draft)
+    assert catalog.draft.status == "published"
+
+    content_page = client.get(f"/admin/contents/{catalog.lesson2.id}").text
+    delete_url = f"/admin/contents/{catalog.lesson2.id}/delete"
+    lesson2_id = catalog.lesson2.id
+    response = client.post(delete_url, data=form_fields(content_page, delete_url), follow_redirects=False)
+    assert response.status_code == 303
+    db.expire_all()
+    assert db.scalar(select(Content).where(Content.id == lesson2_id)) is None
+
+    response = client.post("/admin/logout", data=form_fields(content_page, "/admin/logout"), follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/admin/login"
+    assert client.get("/admin/", follow_redirects=False).status_code == 303

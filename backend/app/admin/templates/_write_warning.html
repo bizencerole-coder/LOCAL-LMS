@@ -1,4 +1,4 @@
-{% from "_macros.html" import icon %}
+{% from "_macros.html" import icon with context %}
 {% if unwritable %}
 <div class="flash flash-error" role="alert">{{ icon('alert') }}<span><b>The server cannot change files in: {{ unwritable | join(', ') }}.</b> {{ PERMISSION_HELP }}</span></div>
 {% endif %}

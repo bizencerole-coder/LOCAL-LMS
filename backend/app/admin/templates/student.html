@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, csrf, field, checkbox, flag_badge, type_icon, post_button %}
+{% from "_macros.html" import icon, csrf, field, checkbox, flag_badge, type_icon, post_button with context %}
 {% block title %}{{ student.full_name }}{% endblock %}
 {% block content %}
 <header class="page-head">
