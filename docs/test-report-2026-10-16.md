@@ -199,6 +199,44 @@ Found while testing: the home page put the subject grid below the fold on a tabl
 end-to-end test now opens subjects from the Subjects tab; on tablets the greeting's progress
 moved beside it and the banner was capped at 230 px so notices start on the first screen.
 
+### Campus server upgraded to app 1.2's backend (17 Oct 2026, ~12:41)
+
+After the server was switched on again: `git pull` to `70c1812` and `upgrade.sh --no-pull`:
+backup (`campus_lms_db_20261017T071132Z.dump`, valid, taken before the migrations), sync
+paused and resumed, migrations 0002 → 0003 → 0004, Nginx recreated with
+`nginx/login_gateways.conf` mounted (no entries), **UPGRADE COMPLETE**, all checks passed.
+The network card links at **1000 Mbit/s**.
+
+Then four independent read-only checkers, each with a skeptic re-checking anything it
+reported (workflow `wf_aa2efef7-9f6`):
+
+| Lens | Result |
+|---|---|
+| Data | Row counts, content titles, statuses and storage keys identical to the pre-upgrade dump (4 students, 7 items incl. *FILE 111*, 4 progress rows); new tables present; `alembic_version` 0004; `check-media` 7/7 OK, no unregistered files |
+| Security | notices/banners 401 without a token; `/api/v1/school` public with public fields only; `/branding/` POST/PUT 405, folder and missing file 404, traversal returns nothing; new dashboard pages redirect to sign-in; CSP and X-Frame-Options on the sign-in page; an unlisted address still gets 429 after a few sign-ins; `.env` untracked |
+| API contract | every field app 1.2 reads from `/school`, `/notices`, `/banners` and the 429 `too_many_attempts` error exists with a compatible type; app 1.1's endpoints and schemas unchanged |
+| Operations | containers healthy, no restarts, no API errors or Nginx `[emerg]`/`[crit]`; both cron jobs active; a sync finished after the upgrade; share path and allowlist untouched |
+
+Two real problems confirmed, both older than the upgrade:
+
+1. **Nginx could hold only 1024 open files per worker** on this host (Docker's default limit),
+   about 500 video streams per worker, and logged `4096 worker_connections exceed open file
+   resource limit: 1024` at every start. Fixed in `b5d6ceb` (`worker_rlimit_nofile 16384`),
+   applied at ~12:58 by restarting Nginx: the four workers now run with 16384, the warning
+   is gone, all checks passed.
+2. **The server is being switched off without a shutdown.** PostgreSQL recovered after an
+   unclean stop at each of today's last three starts (09:21, 09:53, 12:39), and the power cut
+   between 11:20 and 12:39 zeroed one line of `sync.log`. Recovery succeeded and no committed
+   data was lost (counts match the 11:19 backup). OMV has the power button set to do nothing
+   (`HandlePowerKey = ignore`), so pressing it does not shut the server down. Not changed
+   from here: set *System → Power Management → Power button* to *Shutdown* in the OMV web UI,
+   always shut down (that button, or OMV's power menu) before unplugging, and consider a UPS.
+
+App 1.2.0 installed on the realme tablet over 1.1.0 (`adb install -r`, same signing key, the
+student stayed signed in): home with greeting (*Good afternoon, Demo*, 3 in progress, 1 of 4
+completed) and the welcome slide, Notices (none yet), Profile, *Connected*. The school's
+branding, notices and banners are still the defaults on the campus dashboard.
+
 ## Review findings and fixes
 
 A multi-agent code review (6 reviewers + adversarial verification) and a live probe of the
@@ -262,7 +300,8 @@ Nginx-generated HTML error pages; secrets visible through `docker inspect`.
 | Load stages 50 and 100 clients (server side), then with physical tablets | not run; harness ready (`load_test.py`), 10 and 25 passed on loopback |
 | Player package choice (`video_player`/ExoPlayer) on the target tablets | provisional until tried on the real models |
 | Android licences on the dev PC (`flutter doctor --android-licenses`) | not accepted; builds still work |
-| Server upgrade to `31e7886` (migrations 0003–0004, Nginx shared-address limit) and app 1.2 on the tablets | pending: server off on 17 Oct afternoon |
+| School branding, notices and banners on the campus dashboard | not set yet (defaults show) |
+| Clean shutdowns: OMV power button set to *Shutdown*, UPS | pending (the user's settings) |
 | 500-student test at the client campus | planned: [load-test-500.md](load-test-500.md) |
 
 Known limitations are listed in `docs/architecture.md`. No claim is made about 500
