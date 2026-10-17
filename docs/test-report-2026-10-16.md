@@ -176,6 +176,29 @@ page's (NUL removed), and on narrow screens wide tables scroll inside the page.
 | Campus server (~11:10) | `upgrade.sh --no-pull`: **UPGRADE COMPLETE**, all checks passed, folder sync resumed; the new upload script is served |
 | On the campus dashboard (the user, ~11:13) | After a reload (the page fetched the new script; static files are sent with `Cache-Control: no-store`), the user deleted the three duplicate uploads and uploaded a video through the new list: stored as *FILE 111*, published, with its title in the `.txt` file next to it (no description stored); the user confirmed the upload kept what was typed |
 
+## App 1.2 and preparation for 500 students (17 Oct 2026, afternoon, developer PC)
+
+Commits `f4f629b` (school branding, notices, home banners, app redesign) and `31e7886`
+(sign-ins behind a shared address, account lock, load tools). The campus server was
+switched off, so neither is deployed there yet.
+
+| Test | Result |
+|---|---|
+| Backend tests | **151 passed** (14 new: branding, notice audiences and order, banner links and dates, forms' tokens, sign-in lock) |
+| Migrations 0003 and 0004 on PostgreSQL (local stack) | applied; `alembic check`: no difference between models and database |
+| `/branding/` through Nginx | logo 200 `image/png` with `Cache-Control: public, max-age=604800, immutable`; missing file 404, folder 404, POST 405 |
+| App tests | `flutter analyze` clean; **90 passed** (15 new: models, API, colours, greetings, dates, unread notices, greeting card, banner slides and their links, notice cards read out as one item, no overflow on a phone at 130–150 % text) |
+| End-to-end on the tablet emulator (`uitest001`, a throwaway local account) | **passed** (44 s): wrong password, sign-in, greeting, Subjects → module → video with seek, speed, full screen and resume, PDF notes, Continue watching, My Learning, Notices, sign-out from Profile |
+| Screens on the emulator (2560 × 1600) | sign-in panel with the school's logo, name and tagline; header with logo, connection, bell with count, avatar; greeting with class and progress beside it; banner slides with *Read notice* / *Open subject*; notices (important, new dots, times, audiences); side menu; Notices, Profile and Subjects tabs; dark mode |
+| Dashboard pages (rendered by the app's test fixtures) | *Notices*, *Home banners* (thumbnails, links, audience, status, order) and *School* (with the app preview) checked in a browser |
+| Sign-in burst, local stack | 40 sign-ins at once from one address: 6 reached the API, 34 got 429. With that address listed as shared (`set_network.sh --login-gateway`): 120 at once, all reached the API |
+| Load rehearsal, local stack | 30 simulated students on one lesson (`--one-lesson`) for 60 s: no errors, no rebuffers, start-up p50 43 ms / p95 97 ms, 1.24 Mbit/s each; `monitor_server.sh` sampled alongside |
+| `set_network.sh --share-path` | value with backslashes written and read back by the API; removed again |
+
+Found while testing: the home page put the subject grid below the fold on a tablet, so the
+end-to-end test now opens subjects from the Subjects tab; on tablets the greeting's progress
+moved beside it and the banner was capped at 230 px so notices start on the first screen.
+
 ## Review findings and fixes
 
 A multi-agent code review (6 reviewers + adversarial verification) and a live probe of the
@@ -239,6 +262,8 @@ Nginx-generated HTML error pages; secrets visible through `docker inspect`.
 | Load stages 50 and 100 clients (server side), then with physical tablets | not run; harness ready (`load_test.py`), 10 and 25 passed on loopback |
 | Player package choice (`video_player`/ExoPlayer) on the target tablets | provisional until tried on the real models |
 | Android licences on the dev PC (`flutter doctor --android-licenses`) | not accepted; builds still work |
+| Server upgrade to `31e7886` (migrations 0003–0004, Nginx shared-address limit) and app 1.2 on the tablets | pending: server off on 17 Oct afternoon |
+| 500-student test at the client campus | planned: [load-test-500.md](load-test-500.md) |
 
 Known limitations are listed in `docs/architecture.md`. No claim is made about 500
 concurrent viewers.
