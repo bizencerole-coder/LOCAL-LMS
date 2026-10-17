@@ -164,6 +164,7 @@ page's (NUL removed), and on narrow screens wide tables scroll inside the page.
 | Upload list in a browser (the module page as rendered by the app, uploads answered by a local stand-in for the API, as the browser was not signed in to the local dashboard) | Titles filled in from file names (*Loops And Conditions* from `02-loops_and-conditions.pdf`); a typed title and a Malayalam description arrived exactly as typed, with the CSRF header; a `.docx` refused in the list; a refused upload stays editable with its error (*Upload 1 file*); automatic reload only once every file is in; 375 px wide at phone width |
 | Nginx (local and campus server) | request line of 17–19 KB (longest title and description in Malayalam): 200, was 414 |
 | Campus server (~11:10) | `upgrade.sh --no-pull`: **UPGRADE COMPLETE**, all checks passed, folder sync resumed; the new upload script is served |
+| On the campus dashboard (the user, ~11:13) | After a reload (the page fetched the new script; static files are sent with `Cache-Control: no-store`), the user deleted the three duplicate uploads and uploaded a video through the new list: stored as *FILE 111*, published, with its title in the `.txt` file next to it (no description stored); the user confirmed the upload kept what was typed |
 
 ## Review findings and fixes
 
