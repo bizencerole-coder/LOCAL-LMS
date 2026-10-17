@@ -219,9 +219,12 @@ students. The dashboard has:
   display name (and the folder's `title.txt`). Subjects, modules and items can be put in
   order with the arrows; only empty batches, classes, subjects and modules can be deleted.
 - **Uploading**: on a module's page, drop files onto the upload area or choose them. Each
-  file is checked (an MP4 must be H.264 + AAC with fast-start; a PDF must be a real PDF),
-  then stored in the module's folder with a title made from its file name. Files that pass
-  are published straight away when the box is ticked; files with problems stay drafts.
+  file gets its own **Title** (filled in from the file name; change it) and **Description**
+  (optional, shown to students); press **Upload** when they are right. Each file is checked
+  (an MP4 must be H.264 + AAC with fast-start; a PDF must be a real PDF), then stored in the
+  module's folder under its title, with the title and description in its `.txt` file. Files
+  that pass are published straight away when the box is ticked; files with problems stay
+  drafts. (The *Module settings* below the upload area rename the module, not the files.)
   Uploads stream to the content disk, so large videos are fine (limit `UPLOAD_MAX_BYTES`,
   default 8 GB, and 1 GB must stay free).
 - **Each item's page**: preview (video player, PDF, image), title and description (shown to

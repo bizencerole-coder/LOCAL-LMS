@@ -51,19 +51,24 @@
   <div class="dropzone" data-upload-url="/admin/upload/{{ module.id }}" data-max-bytes="{{ max_upload }}">
     {{ icon('upload', 'big') }}
     <p><b>Drop files here</b> or <label class="btn btn-small">choose files<input type="file" multiple accept="{{ accept_types }}" class="visually-hidden" data-upload-input></label></p>
-    <p class="hint">MP4 videos (H.264 + AAC, fast-start), PDF notes, JPG/PNG/WebP images · up to {{ max_upload | size }} each. The file name becomes the title; you can rename items after uploading.</p>
-    <label class="check"><input type="checkbox" data-upload-publish checked><span>Publish each file when it passes the check</span></label>
+    <p class="hint">MP4 videos (H.264 + AAC, fast-start), PDF notes, JPG/PNG/WebP images · up to {{ max_upload | size }} each. Then give each file a title and a description (shown to students) and press Upload.</p>
   </div>
   <ul class="uploads" data-upload-list></ul>
+  <div class="upload-actions" data-upload-actions hidden>
+    <label class="check"><input type="checkbox" data-upload-publish checked><span>Publish each file when it passes the check</span></label>
+    <button class="btn" type="button" data-upload-clear>Clear the list</button>
+    <button class="btn btn-primary" type="button" data-upload-start>{{ icon('upload') }}<span>Upload</span></button>
+  </div>
   <noscript><p class="warn">Uploading needs JavaScript. You can also copy files into the folder shown at the top; they appear within 5 minutes.</p></noscript>
 </section>
 
 <section class="card">
   <h2>{{ icon('edit') }}Module settings</h2>
+  <p class="muted small">The name and description of the module itself. A file's title and description are set when it is uploaded, or on its page (open it from the list above).</p>
   <form method="post" action="/admin/modules/{{ module.id }}" class="form-grid">
     {{ csrf() }}
-    {{ field('title', 'Title', module.title, required=True, maxlength=200) }}
-    {{ textarea('description', 'Description', module.description, rows=2) }}
+    {{ field('title', 'Module title', module.title, required=True, maxlength=200) }}
+    {{ textarea('description', 'Module description', module.description, rows=2) }}
     {{ checkbox('is_published', 'Visible to students', module.is_published) }}
     <div class="form-actions"><button class="btn btn-primary" type="submit">{{ icon('check') }}<span>Save</span></button></div>
   </form>

@@ -154,7 +154,8 @@ every tablet runs app 1.1.
 sign-in at `/admin/login` sets an HttpOnly, SameSite=Strict session cookie scoped to
 `/admin`; every form post carries a CSRF token and is checked against the `Origin` header;
 pages are sent with a strict Content-Security-Policy. File uploads go to
-`PUT /admin/upload/{module_id}?filename=…&publish=true` with the raw file as the body and
-the CSRF token in `X-CSRF-Token`; the response is `{"ok": true, "id": …, "type": …, "status": …, "problems": […]}`
+`PUT /admin/upload/{module_id}?filename=…&title=…&description=…&publish=true` with the raw
+file as the body and the CSRF token in `X-CSRF-Token` (`title` up to 200 characters, made from
+the file name when left out; `description` up to 2,000); the response is `{"ok": true, "id": …, "type": …, "status": …, "problems": […]}`
 or `{"ok": false, "error": "…"}`. Media previews for staff use the same signed `/media/` URLs
 with `sid=staff-<id>`.

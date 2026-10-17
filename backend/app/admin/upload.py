@@ -197,7 +197,7 @@ async def upload(
             temp,
             original_name,
             title.strip(),
-            description.strip() or None,
+            ops.clean_text(description),
             publish,
             digest.hexdigest(),
         )

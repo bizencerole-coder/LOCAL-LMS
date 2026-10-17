@@ -43,6 +43,7 @@ code.wrap { word-break: break-all; }
 /* The icon sheet: present for <use href>, takes no space (no inline styles under the CSP). */
 .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+[hidden] { display: none !important; }
 
 .icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: -3px; }
 .icon.big { width: 34px; height: 34px; stroke-width: 1.6; }
@@ -64,7 +65,7 @@ code.wrap { word-break: break-all; }
 .sidebar-foot a.me span { display: flex; flex-direction: column; line-height: 1.2; }
 .sidebar-foot small { color: #8fa0c4; font-size: .78rem; }
 .sidebar-foot .btn-link { color: #c8d3ea; padding: .5rem .7rem; }
-.main { padding: 1.4rem 2rem 3rem; max-width: 1280px; width: 100%; }
+.main { padding: 1.4rem 2rem 3rem; max-width: 1280px; width: 100%; min-width: 0; } /* wide tables scroll inside */
 
 .crumbs { display: flex; align-items: center; gap: .3rem; flex-wrap: wrap; font-size: .88rem; color: var(--muted); margin-bottom: .8rem; }
 .crumbs .icon { width: 14px; height: 14px; }
@@ -105,6 +106,8 @@ a.stat:hover { border-color: var(--primary); }
 .btn-icon { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 7px; border: 1px solid transparent; background: transparent; color: var(--muted); cursor: pointer; }
 .btn-icon:hover { background: var(--grey-soft); color: var(--text); }
 .btn-icon.danger:hover { background: var(--red-soft); color: var(--red); }
+.btn:disabled, .btn:disabled:hover { opacity: .55; cursor: default; background: #fff; border-color: var(--line); }
+.btn-primary:disabled, .btn-primary:disabled:hover { background: var(--primary); border-color: var(--primary); }
 .btn-link { display: inline-flex; align-items: center; gap: .4rem; background: none; border: 0; color: var(--primary); font: inherit; cursor: pointer; padding: 0; }
 form.inline { display: inline; margin: 0; }
 .move { display: inline-flex; flex-direction: column; }
@@ -200,15 +203,20 @@ progress.meter::-moz-progress-bar { background: var(--primary); border-radius: 9
 .dropzone { border: 2px dashed #c3cde0; border-radius: var(--radius); padding: 1.4rem; text-align: center; color: var(--muted); background: #fafbfe; transition: border-color .15s, background .15s; }
 .dropzone.dragging { border-color: var(--primary); background: var(--primary-soft); }
 .dropzone p { margin: .4rem 0; }
-.dropzone .check { justify-content: center; margin: .6rem 0 0; color: var(--text); }
 .uploads { list-style: none; padding: 0; margin: .8rem 0 0; }
-.uploads li { display: grid; grid-template-columns: 1fr auto; gap: .2rem .8rem; padding: .6rem .2rem; border-top: 1px solid var(--line); align-items: center; }
-.uploads progress { grid-column: 1 / -1; width: 100%; height: 6px; appearance: none; border: 0; border-radius: 99px; background: var(--grey-soft); }
+.uploads > li { padding: .8rem .2rem; border-top: 1px solid var(--line); }
+.upload-head { display: flex; flex-wrap: wrap; gap: .3rem .8rem; align-items: center; }
+.upload-name { flex: 1 1 16rem; font-weight: 600; overflow-wrap: anywhere; }
+.upload-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 0 1rem; margin-top: .6rem; }
+.upload-fields .field { margin-bottom: 0; }
+.uploads progress { display: block; width: 100%; height: 6px; margin-top: .6rem; appearance: none; border: 0; border-radius: 99px; background: var(--grey-soft); }
 .uploads progress::-webkit-progress-bar { background: var(--grey-soft); border-radius: 99px; }
 .uploads progress::-webkit-progress-value { background: var(--primary); border-radius: 99px; }
 .uploads progress::-moz-progress-bar { background: var(--primary); border-radius: 99px; }
 .uploads .ok { color: var(--green); }
 .uploads .fail { color: var(--red); }
+.upload-actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-top: .4rem; padding-top: .9rem; border-top: 1px solid var(--line); }
+.upload-actions .check { flex: 1 1 18rem; margin: 0; }
 
 /* ---------- item page */
 .preview video, .preview img { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; display: block; object-fit: contain; }
@@ -242,5 +250,6 @@ pre.report { background: #0f1f3d; color: #dbe4f5; padding: 1rem; border-radius: 
   .main { padding: 1rem; }
   .stats { grid-template-columns: repeat(2, 1fr); }
   .form-grid { grid-template-columns: 1fr; }
+  .upload-fields { grid-template-columns: 1fr; }
   .table { display: block; overflow-x: auto; }
 }

@@ -6,6 +6,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.catalog_sync import read_sidecar
 from app.models import (
     AuthSession,
     Batch,
@@ -207,6 +208,39 @@ def test_upload_rejections(client, db, catalog, teacher):
     slow = _upload(client, teacher, catalog.basics.id, "slow.mp4", build_mp4(faststart=False), publish="true")
     assert slow.json()["status"] == "draft" and slow.json()["problems"]  # never auto-published with problems
     assert not [p for p in (VIDEO_ROOT / ".uploads").iterdir() if p.is_file()]
+
+
+def test_upload_keeps_the_title_and_description_given_for_the_file(client, db, catalog, teacher):
+    """Each file in the upload list is sent with its own title and description."""
+    description = "പൈത്തൺ അടിസ്ഥാനങ്ങൾ: വേരിയബിളുകൾ, ലൂപ്പുകൾ, ഫംഗ്ഷനുകൾ. " * 50
+    sent = description[:1990] + "\x00!"
+    response = client.put(
+        f"/admin/upload/{catalog.basics.id}",
+        params={"filename": "Python Tutorial SnapYT.App.mp4", "title": "Python in 10 minutes",
+                "description": sent, "publish": "true"},
+        content=build_mp4(), headers={"X-CSRF-Token": teacher, "Content-Type": "application/octet-stream"},
+    )
+    assert response.status_code == 200, response.text
+    expected = sent.replace("\x00", "").strip()  # cleaned like the item page does
+    item = db.get(Content, uuid.UUID(response.json()["id"]))
+    assert item.title == response.json()["title"] == "Python in 10 minutes"
+    assert item.description == expected
+    assert item.storage_key.endswith("-python-in-10-minutes.mp4")
+    # The title file next to it is what the folder sync reads, so a later sync keeps both.
+    path = VIDEO_ROOT.joinpath(*item.storage_key.split("/"))
+    assert read_sidecar(path) == ("Python in 10 minutes", expected)
+
+    headers = login(client, "demo.student")
+    listed = client.get(f"/api/v1/modules/{catalog.basics.id}/contents", headers=headers).json()
+    assert {c["title"]: c["description"] for c in listed}["Python in 10 minutes"] == expected
+
+
+def test_module_page_asks_for_each_files_details_apart_from_the_module(client, catalog, teacher):
+    page = client.get(f"/admin/modules/{catalog.basics.id}").text
+    upload = page[page.index('id="upload"'):page.index("Module settings")]
+    assert all(hook in upload for hook in ("data-upload-list", "data-upload-start", "data-upload-publish"))
+    # The module's own fields say so, so they are not mistaken for the uploaded file's.
+    assert "Module title" in page and "Module description" in page
 
 
 def test_publish_unpublish_archive_and_force(client, db, catalog, teacher):
