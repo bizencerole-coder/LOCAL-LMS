@@ -277,6 +277,18 @@ class AuthSession(Base):
     student: Mapped[Student] = relationship()
 
 
+class LoginThrottle(Base):
+    """Recent wrong passwords per account ("student:<id>") or per unknown name
+    ("name:<what was typed>"), for the sign-in lock (LOGIN_MAX_FAILURES)."""
+
+    __tablename__ = "login_throttle"
+
+    key: Mapped[str] = mapped_column(String(120), primary_key=True)
+    failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    first_failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class StaffUser(Base):
     """A teacher or administrator who signs in to the web dashboard."""
 

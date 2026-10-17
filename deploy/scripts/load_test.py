@@ -13,8 +13,9 @@ Accounts: create them once (password in LMS_LOAD_PASSWORD for the run):
     printf '%s\\n' "$PW" | deploy/scripts/lms-admin.sh create-load-students --count 100 --class "Class 12" --password-stdin
     deploy/scripts/lms-admin.sh delete-load-students      # afterwards
 
-Nginx limits logins to 10/min (+5 burst) per source address, so from one load host the
-sign-in phase takes about (clients - 15) x 6 s; the harness retries 429s. Each client
+Nginx limits logins to 10/min (+5 burst) per source address: list the load host as a shared
+address first (deploy/scripts/set_network.sh --login-gateway <its address>), or the sign-in
+phase takes about (clients - 15) x 6 s; the harness retries 429s. Each client
 streams for --duration seconds after its own sign-in.
 
 This exercises the server, its NIC and the switch. It does NOT validate Wi-Fi capacity;
@@ -175,7 +176,8 @@ class Client(threading.Thread):
         if not videos:
             self.m.error(f"{self.username}: no published lessons visible")
             return
-        video = videos[self.index % len(videos)]
+        # A class watches one lesson (and the server's memory holds it); otherwise spread out.
+        video = videos[0] if self.cfg.one_lesson else videos[self.index % len(videos)]
 
         self.deadline = time.monotonic() + self.cfg.duration
         self.m.count("clients_streaming")
@@ -309,6 +311,8 @@ def main() -> int:
     parser.add_argument("--username-prefix", default="load", help="accounts <prefix>001.. (create-load-students)")
     parser.add_argument("--ramp", type=float, default=0.5, help="seconds between client starts")
     parser.add_argument("--seek-every", type=float, default=90, help="average seconds between seeks per client")
+    parser.add_argument("--one-lesson", action="store_true",
+                        help="every client watches the same lesson, as a class does (default: spread over all lessons)")
     parser.add_argument("--no-docker-stats", action="store_true")
     parser.add_argument("--json", metavar="FILE", help="also write raw results as JSON")
     cfg = parser.parse_args()
@@ -323,7 +327,8 @@ def main() -> int:
     started_at = datetime.now(UTC)
     metrics = Metrics()
     clients = [Client(i, cfg, metrics, password) for i in range(1, cfg.clients + 1)]
-    print(f"Campus LMS load test: {cfg.clients} clients x {cfg.duration:.0f} s against {cfg.base_url}")
+    print(f"Campus LMS load test: {cfg.clients} clients x {cfg.duration:.0f} s against {cfg.base_url}"
+          f" ({'one lesson for all' if cfg.one_lesson else 'spread over all lessons'})")
     wall_start = time.monotonic()
     for client in clients:
         client.start()

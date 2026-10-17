@@ -652,4 +652,21 @@ void main() {
       expect(downloads, 0);
     });
   });
+
+  test('a locked account says how long to wait; other 429s ask for a minute', () async {
+    final locked = clientWith((_) async => jsonResponse({
+          'error': {'code': 'too_many_attempts', 'message': 'Too many wrong passwords for this account. Try again in 10 minutes.'},
+        }, 429));
+    await expectLater(
+      locked.login('demo.student', 'x'),
+      throwsA(apiError(ApiErrorKind.rateLimited)
+          .having((e) => e.message, 'message', 'Too many wrong passwords for this account. Try again in 10 minutes.')),
+    );
+    final nginx = clientWith((_) async => http.Response('<html>429 Too Many Requests</html>', 429));
+    await expectLater(
+      nginx.login('demo.student', 'x'),
+      throwsA(apiError(ApiErrorKind.rateLimited)
+          .having((e) => e.message, 'message', 'Too many attempts. Please wait a minute and try again.')),
+    );
+  });
 }

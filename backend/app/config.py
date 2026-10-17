@@ -49,6 +49,11 @@ class Settings(BaseSettings):
 
     playback_url_ttl_seconds: int = Field(default=7200, ge=60, le=86400)
     session_ttl_seconds: int = Field(default=28800, ge=300, le=7 * 86400)
+    # After this many wrong passwords for one account (or one unknown name) within
+    # LOGIN_LOCK_SECONDS, that account cannot sign in until LOGIN_LOCK_SECONDS have passed.
+    # Per account, so guessing stays slow even when many tablets share one address (NAT).
+    login_max_failures: int = Field(default=5, ge=1, le=100)
+    login_lock_seconds: int = Field(default=600, ge=10, le=86400)
 
     # Fraction of the duration after which a lesson counts as completed.
     # 0 disables automatic completion (only an explicit client flag completes).

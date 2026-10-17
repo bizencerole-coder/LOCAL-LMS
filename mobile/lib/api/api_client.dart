@@ -159,7 +159,8 @@ class ApiClient {
       ApiErrorKind.unavailable => 'The campus server is starting up or busy. Please try again shortly.',
       _ => 'The campus server had a problem (HTTP $status). Please try again.',
     };
-    if (kind == ApiErrorKind.rateLimited) {
+    // Nginx's per-address limit says nothing useful; a locked account says how long to wait.
+    if (kind == ApiErrorKind.rateLimited && code != 'too_many_attempts') {
       message = 'Too many attempts. Please wait a minute and try again.';
     }
     return ApiException(kind, message, statusCode: status, code: code);

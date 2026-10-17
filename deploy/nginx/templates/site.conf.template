@@ -7,8 +7,25 @@ upstream lms_api {
     keepalive 16;
 }
 
-# Per-client-IP login throttle (FR-01): 10 attempts/minute, short bursts allowed.
-limit_req_zone $binary_remote_addr zone=lms_login:10m rate=10r/m;
+# Sign-in throttle per client address (FR-01): 10 attempts/minute, short bursts allowed.
+# Addresses in lms/login_gateways.conf are routers that put many tablets behind one
+# address (NAT) and load-test computers: they get room for a whole school signing in at
+# once. Guessing one account's password stays slow there too: the API locks an account
+# after LOGIN_MAX_FAILURES wrong passwords.
+geo $lms_login_gateway {
+    default 0;
+    include /etc/nginx/lms/login_gateways.conf;
+}
+map $lms_login_gateway $lms_login_key {
+    0       $binary_remote_addr;
+    default "";
+}
+map $lms_login_gateway $lms_gateway_login_key {
+    0       "";
+    default $binary_remote_addr;
+}
+limit_req_zone $lms_login_key zone=lms_login:10m rate=10r/m;
+limit_req_zone $lms_gateway_login_key zone=lms_login_gateway:1m rate=20r/s;
 limit_req_zone $binary_remote_addr zone=lms_admin_login:1m rate=10r/m;
 limit_req_status 429;
 
@@ -55,6 +72,7 @@ server {
 
     location = /api/v1/auth/login {
         limit_req zone=lms_login burst=5 nodelay;
+        limit_req zone=lms_login_gateway burst=600 nodelay;
         proxy_pass http://lms_api;
     }
 

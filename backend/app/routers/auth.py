@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+import math
+import random
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Response
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
@@ -14,7 +17,7 @@ from ..db import get_db
 from ..deps import Auth, get_auth
 from ..errors import ApiError
 from ..logging_config import log_event
-from ..models import AuthSession, Batch, SchoolClass, Student, utcnow
+from ..models import AuthSession, Batch, LoginThrottle, SchoolClass, Student, as_utc, utcnow
 from ..schemas import LoginRequest, LoginResponse, MeResponse, NamedRef, StudentSummary
 from ..security import (
     burn_dummy_verification,
@@ -30,6 +33,56 @@ logger = logging.getLogger("app.auth")
 
 def _invalid_credentials() -> ApiError:
     return ApiError(401, "invalid_credentials", "Incorrect username or password.")
+
+
+def _throttle_key(student: Student | None, identifier: str) -> str:
+    """One count per account, whichever name it was typed as; else per typed name."""
+    if student is not None:
+        return f"student:{student.id}"
+    return "name:" + identifier.strip().lower().replace("\x00", "")[:100]
+
+
+def _lock_seconds_left(db: Session, key: str, now: datetime) -> int:
+    row = db.get(LoginThrottle, key)
+    if row is None or row.locked_until is None:
+        return 0
+    return max(0, math.ceil((as_utc(row.locked_until) - now).total_seconds()))
+
+
+def _record_failure(db: Session, key: str, now: datetime, settings: Settings) -> None:
+    """Count a wrong password; lock the account at LOGIN_MAX_FAILURES within the window."""
+    window = timedelta(seconds=settings.login_lock_seconds)
+    row = db.get(LoginThrottle, key)
+    if row is None:
+        row = LoginThrottle(key=key, failures=0, first_failed_at=now)
+        db.add(row)
+        if random.random() < 0.01:  # now and then, forget streaks that ended long ago
+            stale = now - max(window, timedelta(days=1))
+            db.execute(
+                delete(LoginThrottle).where(
+                    LoginThrottle.first_failed_at < stale,
+                    func.coalesce(LoginThrottle.locked_until, LoginThrottle.first_failed_at) < now,
+                )
+            )
+    elif as_utc(row.first_failed_at) + window <= now:  # an old streak: count afresh
+        row.failures, row.first_failed_at, row.locked_until = 0, now, None
+    row.failures += 1
+    if row.failures >= settings.login_max_failures:
+        row.locked_until = now + window
+    try:
+        db.commit()
+    except IntegrityError:  # the same name failed twice at once; one count is enough
+        db.rollback()
+
+
+def _too_many_attempts(seconds: int) -> ApiError:
+    minutes = max(1, math.ceil(seconds / 60))
+    return ApiError(
+        429,
+        "too_many_attempts",
+        f"Too many wrong passwords for this account. Try again in {minutes} minute{'' if minutes == 1 else 's'}.",
+        headers={"Retry-After": str(seconds)},
+    )
 
 
 def _find_student(db: Session, identifier: str) -> Student | None:
@@ -50,11 +103,20 @@ def login(
     settings: Settings = Depends(get_settings),
 ) -> LoginResponse:
     student = _find_student(db, body.username)
+    key = _throttle_key(student, body.username)
+    now = utcnow()
+    # A locked account is refused even with the right password, so guessing cannot go on.
+    if (wait := _lock_seconds_left(db, key, now)) > 0:
+        log_event(logger, "login_failed", logging.WARNING, reason="locked",
+                  student_id=student.id if student else None)
+        raise _too_many_attempts(wait)
     if student is None:
         burn_dummy_verification(body.password)
+        _record_failure(db, key, now, settings)
         log_event(logger, "login_failed", logging.WARNING, reason="unknown_user")
         raise _invalid_credentials()
     if not verify_password(student.password_hash, body.password):
+        _record_failure(db, key, now, settings)
         log_event(logger, "login_failed", logging.WARNING, reason="bad_password", student_id=student.id)
         raise _invalid_credentials()
     if not student.is_active:
@@ -68,7 +130,7 @@ def login(
     if password_needs_rehash(student.password_hash):
         student.password_hash = hash_password(body.password)
 
-    now = utcnow()
+    db.execute(delete(LoginThrottle).where(LoginThrottle.key == key))
     token = new_session_token()
     # Drop this student's stale sessions so the table does not grow without bound.
     db.execute(

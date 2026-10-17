@@ -402,8 +402,13 @@ LMS_LOAD_PASSWORD="$PW" python3 scripts/load_test.py --base-url http://192.168.1
 scripts/lms-admin.sh delete-load-students        # removes the accounts and their progress
 ```
 
-Run it from a wired machine on the LAN, not on the server. Details, limits and how to read
-the output: [testing-plan.md](testing-plan.md#staged-load-test-server-side).
+Run it from a wired machine on the LAN, not on the server, and list that machine as a shared
+address first (`scripts/set_network.sh --login-gateway <its address>`), or Nginx allows it
+10 sign-ins a minute. `--one-lesson` makes every simulated student watch the same lesson, as
+a class does; `scripts/monitor_server.sh` records the server's CPU, memory, disk and
+network meanwhile. Details, limits and how to read the output:
+[testing-plan.md](testing-plan.md#staged-load-test-server-side). The plan for 500 students
+at the client campus: [load-test-500.md](load-test-500.md).
 
 ## 15. Upgrade path
 
@@ -459,18 +464,28 @@ At the new site:
 
    ```bash
    cd ~/campus-lms/deploy
-   scripts/set_network.sh --media-base-url http://<new address> --allow <tablet subnet, e.g. 10.20.0.0/16>
+   scripts/set_network.sh --media-base-url http://<new address> --allow <tablet subnet, e.g. 10.20.0.0/16> \
+       --share-path '\\<new address>\campus-lms\videos'
    ```
 
-   It rewrites `MEDIA_BASE_URL`, regenerates `nginx/allowlist.conf`, recreates the API,
-   restarts Nginx and runs `check_stack.sh`. Use `--dry-run` first to see the changes.
+   It rewrites `MEDIA_BASE_URL` and the share path shown on the dashboard, regenerates
+   `nginx/allowlist.conf`, recreates the API, restarts Nginx and runs `check_stack.sh`. Use
+   `--dry-run` first to see the changes. (`--media-base-url ""` lets playback links use
+   whatever address each tablet typed.) The staff PCs reach the share at the new address too.
 4. On each tablet: sign-in screen → **Server** → the new address → *Test connection* →
    Save. Or build the APK with the new default (`mobile/README.md`).
 5. Run the smoke test from a laptop on the new Wi-Fi: `python3 scripts/smoke_test.py --base-url http://<new address>`.
 6. Check the Wi-Fi: tablets must reach the server (no client isolation, no guest VLAN),
    and each tablet should have its own address as seen by the server
-   (`docker compose logs nginx | grep remote_addr`). If they all share one address, the
-   login throttle is shared by the whole class — fix the routing or raise the limit.
+   (`docker compose logs nginx | grep remote_addr`). If they all share one address (the router
+   translates addresses: NAT), the per-address sign-in limit would be shared by the whole
+   school: list that address with `scripts/set_network.sh --login-gateway <address>` (each
+   account is still locked after 5 wrong passwords), or have the router route instead.
+
+**Before a client demo** at the new site: on the dashboard, *School* (their name, short
+name, tagline, colour and logo), a few *Home banners* and *Notices*, the lessons published;
+student accounts for the demo; on each tablet app 1.2 (§9) with the server address set and a
+student signed in; then unplug the internet line (§10) and show everything still works.
 
 To avoid step 4 at every move, give the server a **local DNS name** (e.g. `lms.campus.lan`)
 on each site's DNS server and use that name as `MEDIA_BASE_URL` and in the app; then only

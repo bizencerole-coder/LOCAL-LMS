@@ -9,7 +9,7 @@ import string
 import uuid
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -19,6 +19,7 @@ from ..db import get_db
 from ..media import build_playback_url
 from ..models import (
     AuthSession,
+    LoginThrottle,
     Batch,
     Content,
     ContentProgress,
@@ -1008,6 +1009,8 @@ def reset_student_password(student_id: uuid.UUID, form=Depends(posted_form), db:
     student = _get(db, Student, student_id, "student")
     student.password_hash = hash_password(_password_pair(form))
     revoked = _revoke_student_sessions(db, student)
+    # A new password also lifts a lock from wrong passwords (the student can sign in now).
+    db.execute(delete(LoginThrottle).where(LoginThrottle.key == f"student:{student.id}"))
     db.commit()
     return redirect(f"/admin/students/{student.id}", f"Password changed; {revoked} session(s) signed out.")
 

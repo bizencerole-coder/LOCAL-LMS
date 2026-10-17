@@ -41,6 +41,7 @@ from .media import (
 )
 from .models import (
     AuthSession,
+    LoginThrottle,
     Batch,
     Content,
     ContentStatus,
@@ -367,6 +368,7 @@ def cmd_set_password(db: Session, args: argparse.Namespace) -> None:
     student = find_student(db, args.student)
     student.password_hash = hash_password(read_password(args, f"New password for {student.username}: "))
     revoked = revoke_sessions(db, student)
+    db.execute(delete(LoginThrottle).where(LoginThrottle.key == f"student:{student.id}"))  # lifts a lock
     print(f"Password updated for {student.username}; {revoked} session(s) signed out.")
 
 

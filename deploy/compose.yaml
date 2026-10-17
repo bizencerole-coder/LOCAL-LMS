@@ -47,6 +47,8 @@ services:
       MEDIA_BASE_URL: ${MEDIA_BASE_URL:-}
       PLAYBACK_URL_TTL_SECONDS: ${PLAYBACK_URL_TTL_SECONDS:-7200}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-28800}
+      LOGIN_MAX_FAILURES: ${LOGIN_MAX_FAILURES:-5}
+      LOGIN_LOCK_SECONDS: ${LOGIN_LOCK_SECONDS:-600}
       COMPLETION_THRESHOLD: ${COMPLETION_THRESHOLD:-0.9}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -86,6 +88,7 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/templates:/etc/nginx/templates:ro
       - ./nginx/allowlist.conf:/etc/nginx/lms/allowlist.conf:ro
+      - ./nginx/login_gateways.conf:/etc/nginx/lms/login_gateways.conf:ro
       - ${VIDEO_ROOT}:/srv/campus-lms/videos:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/nginx-health"]
